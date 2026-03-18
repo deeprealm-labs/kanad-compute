@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kanad-compute"
+version = "0.1.0"
+description = "Turn your computer into a Kanad quantum chemistry compute server"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.11"
+authors = [
+    {name = "DeepRealm Labs", email = "mk@deeprealm.in"},
+]
+keywords = ["quantum", "chemistry", "compute", "kanad", "vqe"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Physics",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "httpx>=0.25.0",
+    "click>=8.1.0",
+    "rich>=13.0.0",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "psutil>=5.9.0",
+    # Kanad core (quantum chemistry)
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "qiskit>=1.2.0",
+    "qiskit-aer>=0.15.0",
+    "pyscf>=2.4",
+]
+
+[project.optional-dependencies]
+gpu = [
+    "qiskit-aer-gpu>=0.15.0",
+]
+ibm = [
+    "qiskit-ibm-runtime>=0.28.0",
+]
+ionq = [
+    "qiskit-ionq>=1.0.0",
+]
+all = [
+    "kanad-compute[gpu,ibm,ionq]",
+]
+
+[project.scripts]
+kanad-compute = "kanad_compute.cli:main"
+
+[project.urls]
+Homepage = "https://kanad.xyz"
+Repository = "https://github.com/mk0dz/kanad-compute"
+
+[tool.setuptools.packages.find]
+include = ["kanad_compute*"]
