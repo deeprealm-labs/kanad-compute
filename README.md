@@ -35,29 +35,38 @@ kanad-compute runs a local FastAPI server that executes quantum chemistry calcul
 
 ## Installation
 
-### Basic (statevector only)
+### From GitHub (recommended)
+
+```bash
+# Clone the repo
+git clone https://github.com/mk0dz/kanad-compute.git
+cd kanad-compute
+
+# Install in development mode
+pip install -e .
+
+# With GPU acceleration
+pip install -e ".[gpu]"
+
+# With IBM Quantum hardware
+pip install -e ".[ibm]"
+
+# With IonQ
+pip install -e ".[ionq]"
+
+# Everything
+pip install -e ".[all]"
+```
+
+> **Note:** You also need the Kanad framework installed. If you don't have it:
+> ```bash
+> git clone https://github.com/mk0dz/kanad.git
+> cd kanad && pip install -e .
+> ```
+
+### From PyPI (coming soon)
 ```bash
 pip install kanad-compute
-```
-
-### With GPU acceleration
-```bash
-pip install kanad-compute[gpu]
-```
-
-### With IBM Quantum hardware
-```bash
-pip install kanad-compute[ibm]
-```
-
-### With IonQ
-```bash
-pip install kanad-compute[ionq]
-```
-
-### Everything
-```bash
-pip install kanad-compute[all]
 ```
 
 ## CLI Commands
