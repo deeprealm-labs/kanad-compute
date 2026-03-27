@@ -7,8 +7,9 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel
 
 from .config import load_config
@@ -51,12 +52,32 @@ def create_app(config: Optional[dict] = None) -> FastAPI:
         description="Local quantum chemistry compute server for Kanad platform",
     )
 
+    allowed_origins = [
+        "https://kanad.xyz",
+        "https://kanad-app.vercel.app",
+        "http://localhost:3000",
+        "http://localhost:8000",
+        "https://kanad-api-640826962316.us-central1.run.app",
+    ]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_origins=allowed_origins,
+        allow_methods=["GET", "POST"],
+        allow_headers=["Authorization", "Content-Type"],
     )
+
+    # Request size limit (1 MB)
+    MAX_BODY = 1_048_576
+
+    class SizeLimitMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request: Request, call_next):
+            cl = request.headers.get("content-length")
+            if cl and int(cl) > MAX_BODY:
+                from starlette.responses import JSONResponse
+                return JSONResponse({"detail": "Request too large"}, status_code=413)
+            return await call_next(request)
+
+    app.add_middleware(SizeLimitMiddleware)
 
     # State
     jobs: dict[str, dict] = {}

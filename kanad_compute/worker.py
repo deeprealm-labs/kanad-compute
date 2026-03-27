@@ -140,6 +140,9 @@ def run_calculation(job: dict, gpu_enabled: bool = False) -> dict:
             )
 
         result.update(sol_result)
+        # Compute error_mha if we have both energy and fci_energy
+        if result.get("energy") and result.get("fci_energy") and result.get("error_mha") is None:
+            result["error_mha"] = abs(result["energy"] - result["fci_energy"]) * 1000
         result["status"] = "completed"
 
     except Exception as e:
