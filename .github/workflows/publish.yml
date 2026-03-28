@@ -17,7 +17,7 @@ jobs:
       - name: Checkout kanad framework (private)
         uses: actions/checkout@v4
         with:
-          repository: deeprealm-labs/kanad-app
+          repository: mk0dz/kanad-app
           path: kanad-app
           token: ${{ secrets.KANAD_REPO_TOKEN }}
 
