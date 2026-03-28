@@ -43,7 +43,8 @@ dependencies = [
 
 [project.optional-dependencies]
 gpu = [
-    "qiskit-aer-gpu>=0.15.0",
+    # qiskit-aer-gpu only supports Python <3.13 — install manually if on 3.11/3.12
+    # "qiskit-aer-gpu>=0.15.0",
 ]
 ibm = [
     "qiskit-ibm-runtime>=0.28.0",
@@ -52,7 +53,7 @@ ionq = [
     "qiskit-ionq>=1.0.0",
 ]
 all = [
-    "kanad-compute[gpu,ibm,ionq]",
+    "kanad-compute[ibm,ionq]",
 ]
 
 [project.scripts]
