@@ -80,9 +80,13 @@ def init(port, max_qubits, gpu, ibm_token, ionq_key, ngrok_token):
 @click.option("--port", default=None, type=int, help="Override port")
 @click.option("--reload", is_flag=True, help="Enable auto-reload (development)")
 @click.option("--public/--no-public", default=True, help="Expose via public tunnel (default: yes)")
-@click.option("--ngrok-token", default=None, help="ngrok auth token (optional, for registered tunnels)")
-def start(host, port, reload, public, ngrok_token):
+@click.option("--tunnel", default="ssh", type=click.Choice(["ssh", "ngrok"]), help="Tunnel method (default: ssh — no signup needed)")
+@click.option("--ngrok-token", default=None, help="ngrok auth token (only for --tunnel ngrok)")
+def start(host, port, reload, public, tunnel, ngrok_token):
     """Start the Kanad Compute server."""
+    import subprocess
+    import threading
+    import re
     from .config import load_config, save_config, CONFIG_FILE
 
     if not CONFIG_FILE.exists():
@@ -116,38 +120,27 @@ def start(host, port, reload, public, ngrok_token):
 
     # Start public tunnel
     public_url = None
-    tunnel = None
+    tunnel_proc = None
+
     if public:
-        try:
-            from pyngrok import ngrok, conf
+        if tunnel == "ssh":
+            # SSH tunnel via localhost.run — zero signup, zero config
+            public_url = _start_ssh_tunnel(_port, cfg, save_config)
+        elif tunnel == "ngrok":
+            public_url = _start_ngrok_tunnel(_port, cfg, save_config, ngrok_token)
 
-            if ngrok_token or cfg.get("ngrok_token"):
-                conf.get_default().auth_token = ngrok_token or cfg.get("ngrok_token")
-
-            tunnel = ngrok.connect(_port, "http")
-            public_url = tunnel.public_url
-            # Save to config so user can retrieve it
-            cfg["public_url"] = public_url
-            save_config(cfg)
-
+        if public_url:
             console.print(f"  Public: [bold cyan]{public_url}[/bold cyan]")
             console.print()
             console.print(Panel(
-                f"[bold]Paste this URL in Kanad → Profile → Backend Credentials → Compute URL:[/bold]\n\n"
+                f"[bold]Paste this URL in Kanad → Profile → Compute URL:[/bold]\n\n"
                 f"  [bold cyan]{public_url}[/bold cyan]\n\n"
-                f"[dim]This URL is accessible from kanad.xyz and anywhere on the internet.[/dim]\n"
-                f"[dim]It will change each time you restart unless you use a registered ngrok token.[/dim]",
+                f"[dim]Accessible from kanad.xyz and anywhere on the internet.[/dim]",
                 title="[bold green]Public URL[/bold green]",
                 border_style="green",
             ))
-        except ImportError:
-            console.print("  [yellow]pyngrok not installed — run: pip install pyngrok[/yellow]")
-            console.print("  [dim]Server will only be accessible locally.[/dim]")
-        except Exception as e:
-            console.print(f"  [yellow]Tunnel failed: {e}[/yellow]")
-            console.print("  [dim]Server will only be accessible locally.[/dim]")
-            console.print("  [dim]Tip: Get a free ngrok token at https://ngrok.com and run:[/dim]")
-            console.print("  [dim]  kanad-compute start --ngrok-token YOUR_TOKEN[/dim]")
+        else:
+            console.print("  [yellow]Tunnel failed. Server only accessible locally.[/yellow]")
     else:
         console.print("  [dim]Public tunnel disabled. Use --public to expose.[/dim]")
 
@@ -157,8 +150,6 @@ def start(host, port, reload, public, ngrok_token):
     from .server import create_app
 
     app = create_app(cfg)
-
-    # Store public URL in app state so health endpoint can report it
     app.state.public_url = public_url
 
     try:
@@ -168,13 +159,106 @@ def start(host, port, reload, public, ngrok_token):
             reload=reload,
         )
     finally:
-        # Cleanup tunnel on shutdown
-        if tunnel:
-            try:
-                from pyngrok import ngrok
-                ngrok.disconnect(tunnel.public_url)
-            except Exception:
-                pass
+        pass
+
+
+def _start_ssh_tunnel(port: int, cfg: dict, save_fn) -> str | None:
+    """Start SSH tunnel via localhost.run (no signup needed)."""
+    import subprocess
+    import threading
+    import re
+    import time
+
+    public_url = None
+    url_event = threading.Event()
+
+    def _run_tunnel():
+        nonlocal public_url
+        try:
+            proc = subprocess.Popen(
+                ["ssh", "-tt", "-o", "StrictHostKeyChecking=no", "-o", "ServerAliveInterval=30",
+                 "-R", f"80:localhost:{port}", "localhost.run"],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+            )
+            for line in iter(proc.stdout.readline, b""):
+                text = line.decode("utf-8", errors="ignore").strip()
+                # localhost.run outputs: https://XXXXX.lhr.life
+                match = re.search(r'(https?://\S+\.lhr\.life\S*)', text)
+                if not match:
+                    match = re.search(r'(https?://\S+localhost\.run\S*)', text)
+                if match:
+                    public_url = match.group(1).rstrip(',').rstrip()
+                    cfg["public_url"] = public_url
+                    save_fn(cfg)
+                    url_event.set()
+        except Exception as e:
+            console.print(f"  [yellow]SSH tunnel error: {e}[/yellow]")
+            url_event.set()
+
+    t = threading.Thread(target=_run_tunnel, daemon=True)
+    t.start()
+
+    # Wait up to 15s for the URL
+    url_event.wait(timeout=15)
+    if not public_url:
+        # Try serveo.net as fallback
+        return _start_serveo_tunnel(port, cfg, save_fn)
+    return public_url
+
+
+def _start_serveo_tunnel(port: int, cfg: dict, save_fn) -> str | None:
+    """Fallback: SSH tunnel via serveo.net."""
+    import subprocess
+    import threading
+    import re
+
+    public_url = None
+    url_event = threading.Event()
+
+    def _run():
+        nonlocal public_url
+        try:
+            proc = subprocess.Popen(
+                ["ssh", "-tt", "-o", "StrictHostKeyChecking=no",
+                 "-R", f"0:localhost:{port}", "serveo.net"],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+            )
+            for line in iter(proc.stdout.readline, b""):
+                text = line.decode("utf-8", errors="ignore").strip()
+                match = re.search(r'(https?://\S+serveo\.net\S*)', text)
+                if match:
+                    public_url = match.group(1).rstrip(',').rstrip()
+                    cfg["public_url"] = public_url
+                    save_fn(cfg)
+                    url_event.set()
+        except Exception:
+            url_event.set()
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    url_event.wait(timeout=15)
+    return public_url
+
+
+def _start_ngrok_tunnel(port: int, cfg: dict, save_fn, token: str | None) -> str | None:
+    """Start ngrok tunnel (requires token)."""
+    try:
+        from pyngrok import ngrok, conf
+        auth = token or cfg.get("ngrok_token")
+        if not auth:
+            console.print("  [yellow]ngrok requires auth token. Get one at https://ngrok.com[/yellow]")
+            console.print("  [dim]  kanad-compute start --ngrok-token YOUR_TOKEN[/dim]")
+            console.print("  [dim]Or use SSH tunnel (default): kanad-compute start --tunnel ssh[/dim]")
+            return None
+        conf.get_default().auth_token = auth
+        tun = ngrok.connect(port, "http")
+        public_url = tun.public_url
+        cfg["public_url"] = public_url
+        save_fn(cfg)
+        return public_url
+    except Exception as e:
+        console.print(f"  [yellow]ngrok failed: {e}[/yellow]")
+        return None
 
 
 @main.command()
