@@ -26,7 +26,8 @@ def main():
 @click.option("--gpu/--no-gpu", default=False, help="Enable GPU acceleration")
 @click.option("--ibm-token", default=None, help="IBM Quantum API token")
 @click.option("--ionq-key", default=None, help="IonQ API key")
-def init(port, max_qubits, gpu, ibm_token, ionq_key):
+@click.option("--ngrok-token", default=None, help="ngrok auth token for public tunnels")
+def init(port, max_qubits, gpu, ibm_token, ionq_key, ngrok_token):
     """Initialize Kanad Compute configuration."""
     from .config import init_config
 
@@ -37,6 +38,10 @@ def init(port, max_qubits, gpu, ibm_token, ionq_key):
         port=port, max_qubits=max_qubits, gpu=gpu,
         ibm_token=ibm_token, ionq_key=ionq_key,
     )
+    if ngrok_token:
+        cfg["ngrok_token"] = ngrok_token
+        from .config import save_config
+        save_config(cfg)
 
     # Show config
     table = Table(title="Configuration", box=box.SIMPLE_HEAVY, title_style="bold")
@@ -59,7 +64,8 @@ def init(port, max_qubits, gpu, ibm_token, ionq_key):
         f"[bold green]Your Kanad Compute API Key:[/bold green]\n\n"
         f"[bold white]{cfg['api_key']}[/bold white]\n\n"
         f"[dim]Paste this in Kanad → Profile → Backend Credentials → Compute Key[/dim]\n"
-        f"[dim]Server URL: http://localhost:{cfg['port']}[/dim]",
+        f"[dim]When you run [bold]kanad-compute start[/bold], a public URL will be generated.[/dim]\n"
+        f"[dim]Paste that URL in Kanad → Profile → Backend Credentials → Compute URL[/dim]",
         title="[bold]Ready to connect[/bold]",
         border_style="green",
     ))
@@ -73,9 +79,11 @@ def init(port, max_qubits, gpu, ibm_token, ionq_key):
 @click.option("--host", default=None, help="Override host (default: 0.0.0.0)")
 @click.option("--port", default=None, type=int, help="Override port")
 @click.option("--reload", is_flag=True, help="Enable auto-reload (development)")
-def start(host, port, reload):
+@click.option("--public/--no-public", default=True, help="Expose via public tunnel (default: yes)")
+@click.option("--ngrok-token", default=None, help="ngrok auth token (optional, for registered tunnels)")
+def start(host, port, reload, public, ngrok_token):
     """Start the Kanad Compute server."""
-    from .config import load_config, CONFIG_FILE
+    from .config import load_config, save_config, CONFIG_FILE
 
     if not CONFIG_FILE.exists():
         console.print("[red]No config found. Run [bold]kanad-compute init[/bold] first.[/red]")
@@ -103,19 +111,70 @@ def start(host, port, reload):
     table.add_row("Node ID", cfg["node_id"][:12] + "...")
 
     console.print(Panel(table, title="[bold]System[/bold]", border_style="blue"))
-    console.print(f"\n  Serving on [bold green]http://{_host}:{_port}[/bold green]")
+    console.print(f"\n  Local:  [bold green]http://{_host}:{_port}[/bold green]")
     console.print(f"  API Key: [dim]{cfg['api_key'][:16]}...[/dim]")
-    console.print(f"  Press [bold]Ctrl+C[/bold] to stop.\n")
+
+    # Start public tunnel
+    public_url = None
+    tunnel = None
+    if public:
+        try:
+            from pyngrok import ngrok, conf
+
+            if ngrok_token or cfg.get("ngrok_token"):
+                conf.get_default().auth_token = ngrok_token or cfg.get("ngrok_token")
+
+            tunnel = ngrok.connect(_port, "http")
+            public_url = tunnel.public_url
+            # Save to config so user can retrieve it
+            cfg["public_url"] = public_url
+            save_config(cfg)
+
+            console.print(f"  Public: [bold cyan]{public_url}[/bold cyan]")
+            console.print()
+            console.print(Panel(
+                f"[bold]Paste this URL in Kanad → Profile → Backend Credentials → Compute URL:[/bold]\n\n"
+                f"  [bold cyan]{public_url}[/bold cyan]\n\n"
+                f"[dim]This URL is accessible from kanad.xyz and anywhere on the internet.[/dim]\n"
+                f"[dim]It will change each time you restart unless you use a registered ngrok token.[/dim]",
+                title="[bold green]Public URL[/bold green]",
+                border_style="green",
+            ))
+        except ImportError:
+            console.print("  [yellow]pyngrok not installed — run: pip install pyngrok[/yellow]")
+            console.print("  [dim]Server will only be accessible locally.[/dim]")
+        except Exception as e:
+            console.print(f"  [yellow]Tunnel failed: {e}[/yellow]")
+            console.print("  [dim]Server will only be accessible locally.[/dim]")
+            console.print("  [dim]Tip: Get a free ngrok token at https://ngrok.com and run:[/dim]")
+            console.print("  [dim]  kanad-compute start --ngrok-token YOUR_TOKEN[/dim]")
+    else:
+        console.print("  [dim]Public tunnel disabled. Use --public to expose.[/dim]")
+
+    console.print(f"\n  Press [bold]Ctrl+C[/bold] to stop.\n")
 
     import uvicorn
     from .server import create_app
 
     app = create_app(cfg)
-    uvicorn.run(
-        app, host=_host, port=_port,
-        log_level=cfg.get("log_level", "info"),
-        reload=reload,
-    )
+
+    # Store public URL in app state so health endpoint can report it
+    app.state.public_url = public_url
+
+    try:
+        uvicorn.run(
+            app, host=_host, port=_port,
+            log_level=cfg.get("log_level", "info"),
+            reload=reload,
+        )
+    finally:
+        # Cleanup tunnel on shutdown
+        if tunnel:
+            try:
+                from pyngrok import ngrok
+                ngrok.disconnect(tunnel.public_url)
+            except Exception:
+                pass
 
 
 @main.command()

@@ -92,12 +92,13 @@ def create_app(config: Optional[dict] = None) -> FastAPI:
     # ─── Endpoints ───
 
     @app.get("/health")
-    async def health():
+    async def health(request: Request):
         return {
             "status": "healthy",
             "service": "kanad-compute",
             "version": "0.1.0",
             "node_id": config.get("node_id"),
+            "public_url": getattr(request.app.state, "public_url", None),
         }
 
     @app.get("/info")
