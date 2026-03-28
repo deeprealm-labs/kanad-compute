@@ -9,3 +9,6 @@ build/
 .venv
 env/
 venv/
+
+# Bundled kanad framework (added during CI build, not committed to git)
+kanad_compute/kanad/

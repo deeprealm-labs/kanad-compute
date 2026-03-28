@@ -67,4 +67,7 @@ Homepage = "https://kanad.xyz"
 Repository = "https://github.com/mk0dz/kanad-compute"
 
 [tool.setuptools.packages.find]
-include = ["kanad_compute*"]
+include = ["kanad_compute*", "kanad_compute.kanad*"]
+
+[tool.setuptools.package-data]
+"kanad_compute" = ["kanad/**/*.py", "kanad/**/*.json", "kanad/**/*.dat"]
