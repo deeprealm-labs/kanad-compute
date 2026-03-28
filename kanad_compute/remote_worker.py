@@ -153,27 +153,44 @@ def _execute_job(job: dict, config: dict) -> dict:
 
     start = _time.time()
 
-    # Build job dict in the format run_calculation expects
+    # Parse atoms string "H 0 0 0; Li 0 0 1.6" into list of dicts
+    atoms_raw = job.get("atoms", "")
+    atoms = []
+    if isinstance(atoms_raw, str) and atoms_raw.strip():
+        for part in atoms_raw.split(";"):
+            part = part.strip()
+            if not part:
+                continue
+            tokens = part.split()
+            if len(tokens) >= 4:
+                atoms.append({
+                    "symbol": tokens[0],
+                    "position": [float(tokens[1]), float(tokens[2]), float(tokens[3])],
+                })
+    elif isinstance(atoms_raw, list):
+        atoms = atoms_raw
+
+    if not atoms:
+        raise ValueError(f"No atoms parsed from: {atoms_raw!r}")
+
+    # Build job dict in the format run_calculation expects (top-level keys, not nested config)
     job_record = {
         "job_id": job.get("job_id"),
-        "status": "running",
-        "config": {
-            "atoms": job.get("atoms", ""),
-            "basis": job.get("basis", "sto-3g"),
-            "charge": job.get("charge", 0),
-            "solver_type": job.get("solver_type", "physics_vqe"),
-            "max_iterations": job.get("max_iterations", 100),
-            "max_excitations": job.get("max_excitations", 5),
-            "backend": "statevector",
-            "ansatz_type": job.get("ansatz_type", "hardware_efficient"),
-        },
-        "result": None,
+        "atoms": atoms,
+        "basis": job.get("basis") or "sto-3g",
+        "charge": job.get("charge", 0),
+        "solver": job.get("solver_type", "physics_vqe"),
+        "backend": "statevector",
+        "max_iterations": job.get("max_iterations", 100),
+        "max_excitations": job.get("max_excitations", 5),
+        "ansatz_type": job.get("ansatz_type", "hardware_efficient"),
     }
 
-    # Use the existing worker's run_calculation
-    run_calculation(job_record)
+    # run_calculation returns the result dict
+    result = run_calculation(job_record)
 
-    result = job_record.get("result", {})
+    if result.get("status") == "failed":
+        raise RuntimeError(result.get("error_message", "Calculation failed"))
+
     result["wall_time"] = round(_time.time() - start, 2)
-
     return result
