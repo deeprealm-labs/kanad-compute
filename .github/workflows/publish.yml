@@ -17,7 +17,8 @@ jobs:
       - name: Checkout kanad framework (private)
         uses: actions/checkout@v4
         with:
-          repository: deeprealm-labs/kanad
+          repository: mk0dz/kanad-app
+          ref: live-minimal
           path: kanad-app
           token: ${{ secrets.KANAD_REPO_TOKEN }}
 
@@ -33,16 +34,7 @@ jobs:
 
       - name: Bundle kanad framework
         run: |
-          # deeprealm-labs/kanad repo — kanad package at root or in kanad/
-          if [ -f "kanad-app/kanad/__init__.py" ]; then
-            bash scripts/bundle_kanad.sh kanad-app/kanad
-          elif [ -f "kanad-app/__init__.py" ]; then
-            bash scripts/bundle_kanad.sh kanad-app
-          else
-            echo "Looking for kanad package..."
-            find kanad-app -name "__init__.py" -path "*/kanad/*" | head -3
-            bash scripts/bundle_kanad.sh "$(dirname $(find kanad-app -maxdepth 2 -name '__init__.py' -path '*/kanad/*' | head -1))"
-          fi
+          bash scripts/bundle_kanad.sh kanad-app/kanad
           echo "Bundled $(find kanad_compute/kanad -name '*.py' | wc -l) kanad modules"
 
       - name: Build package
