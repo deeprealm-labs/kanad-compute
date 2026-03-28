@@ -3,8 +3,8 @@ name: Build & Publish to PyPI
 on:
   push:
     tags:
-      - 'v*'  # Trigger on version tags: v0.1.0, v0.2.0, etc.
-  workflow_dispatch:  # Allow manual trigger
+      - 'v*'
+  workflow_dispatch:
 
 jobs:
   build-and-publish:
@@ -14,13 +14,13 @@ jobs:
       - name: Checkout kanad-compute
         uses: actions/checkout@v4
 
-      - name: Checkout kanad framework (private)
-        uses: actions/checkout@v4
-        with:
-          repository: mk0dz/kanad-app
-          ref: live-minimal
-          path: kanad-app
-          token: ${{ secrets.KANAD_REPO_TOKEN }}
+      - name: Clone kanad framework
+        run: |
+          git clone --depth 1 --branch live-minimal \
+            https://x-access-token:${{ secrets.KANAD_REPO_TOKEN }}@github.com/mk0dz/kanad-app.git \
+            kanad-app
+          echo "Cloned kanad-app, kanad/ contents:"
+          ls kanad-app/kanad/__init__.py && echo "OK"
 
       - name: Set up Python
         uses: actions/setup-python@v5
