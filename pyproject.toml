@@ -56,8 +56,19 @@ ionq = [
 ngrok = [
     "pyngrok>=7.0",
 ]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
 all = [
     "kanad-compute[ibm,ionq]",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = [
+    "ignore::DeprecationWarning:websockets.*",
 ]
 
 [project.scripts]
