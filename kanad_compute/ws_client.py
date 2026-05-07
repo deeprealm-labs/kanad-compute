@@ -1,14 +1,24 @@
 """Outbound WebSocket client — replaces remote_worker.py polling loop.
 
 Connects to wss://kanad.xyz/api/compute/connect and:
-  1. Sends Hello with node identity + system info.
-  2. Waits for Registered.
-  3. Receives ExperimentRequest, runs it via worker.run_calculation in a
+  1. Sends Hello with node identity + system info + last_ack_seq for resume.
+  2. Waits for Registered. Verifies protocol version compatibility.
+  3. Replays any unacked events left over from a prior connection.
+  4. Receives ExperimentRequest, runs it via worker.run_calculation in a
      thread, and streams ExperimentEvents (Log → FinalResult/Error) back.
-  4. Pong-replies to server Pings; sends own Pings to keep NATs alive.
+  5. Honours server Acks to trim its in-memory buffer and persist last_ack_seq.
+  6. Pong-replies to server Pings; sends own Pings to keep NATs alive.
 
-Uses the `websockets` library (sync API in a worker thread). Reconnect with
-exponential backoff on transport errors.
+Reliability sketch:
+  - Per-experiment ring buffer of unacked events (RING_MAX entries).
+    When full, oldest non-terminal events (Log/Progress) are dropped;
+    FinalResult/Error are never dropped.
+  - last_ack_seq is persisted to ``~/.kanad-compute/state/seq.json`` (atomic
+    write via tmpfile + rename) so a process restart resumes correctly.
+  - Reconnect uses exponential backoff (1s → 30s) with ±20% jitter.
+
+Phase 2 will replace the in-memory ring buffer with a SQLite outbox for
+crash-resilient delivery.
 """
 
 from __future__ import annotations
@@ -16,10 +26,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import random
 import threading
 import time
 import traceback
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Any, Optional
 
 import websockets
@@ -27,6 +41,7 @@ from websockets.exceptions import ConnectionClosed
 
 from .protocol import (
     PROTOCOL_VERSION,
+    Ack,
     CancelExperiment,
     ExperimentEvent,
     ExperimentRequest,
@@ -45,6 +60,23 @@ logger = logging.getLogger(__name__)
 PING_INTERVAL_S = 15
 RECONNECT_MIN_S = 1
 RECONNECT_MAX_S = 30
+RING_MAX = 100
+TERMINAL_KINDS = frozenset({"FinalResult", "Error"})
+
+
+class _ExperimentBuffer:
+    """Per-experiment outbox state.
+
+    next_seq:      next seq to assign on _emit
+    unacked:       deque of (seq, kind, json_text) waiting for server Ack
+    last_ack_seq:  highest seq the server has acked (persisted to disk)
+    """
+    __slots__ = ("next_seq", "unacked", "last_ack_seq")
+
+    def __init__(self, next_seq: int = 1, last_ack_seq: int = 0):
+        self.next_seq = next_seq
+        self.unacked: deque[tuple[int, str, str]] = deque()
+        self.last_ack_seq = last_ack_seq
 
 
 class ComputeWSClient:
@@ -59,10 +91,51 @@ class ComputeWSClient:
             max_workers=config.get("max_workers", 2),
             thread_name_prefix="kanad-job",
         )
+        # cancel_check closures read this set. threading.Event isn't quite
+        # right because we want set-membership lookup from many threads.
         self._cancelled: set[str] = set()
-        self._seq_by_exp: dict[str, int] = {}
+        self._buffers: dict[str, _ExperimentBuffer] = {}
         self._send_lock = asyncio.Lock()
         self._ws: Optional[websockets.WebSocketClientProtocol] = None
+
+        # State persistence: ~/.kanad-compute/state/seq.json (overridable for tests)
+        state_dir = config.get("state_dir") or (Path.home() / ".kanad-compute" / "state")
+        self._state_dir = Path(state_dir)
+        try:
+            self._state_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            logger.warning(f"Could not create state dir {self._state_dir}: {e}")
+        self._seq_path = self._state_dir / "seq.json"
+        self._load_seq_state()
+
+    # ── persistence ────────────────────────────────────────────────────────
+
+    def _load_seq_state(self) -> None:
+        if not self._seq_path.exists():
+            return
+        try:
+            data = json.loads(self._seq_path.read_text())
+            for exp_id, last_ack in data.items():
+                self._buffers[exp_id] = _ExperimentBuffer(
+                    next_seq=int(last_ack) + 1,
+                    last_ack_seq=int(last_ack),
+                )
+            logger.info(f"Loaded {len(data)} experiment seq states from {self._seq_path}")
+        except Exception as e:
+            logger.warning(f"Failed to load seq state from {self._seq_path}: {e}")
+
+    def _save_seq_state(self) -> None:
+        try:
+            data = {
+                exp_id: buf.last_ack_seq
+                for exp_id, buf in self._buffers.items()
+                if buf.last_ack_seq > 0
+            }
+            tmp = self._seq_path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(data))
+            os.replace(tmp, self._seq_path)
+        except Exception as e:
+            logger.warning(f"Failed to persist seq state: {e}")
 
     # ── public entry ────────────────────────────────────────────────────────
 
@@ -77,13 +150,20 @@ class ComputeWSClient:
                 await self._connect_once()
                 backoff = RECONNECT_MIN_S
             except (ConnectionClosed, OSError) as e:
-                logger.info(f"WS disconnected: {e}; reconnecting in {backoff}s")
-                await asyncio.sleep(backoff)
+                delay = self._jitter(backoff)
+                logger.info(f"WS disconnected: {e}; reconnecting in {delay:.1f}s")
+                await asyncio.sleep(delay)
                 backoff = min(backoff * 2, RECONNECT_MAX_S)
             except Exception as e:
-                logger.exception(f"WS unexpected error: {e}")
-                await asyncio.sleep(backoff)
+                delay = self._jitter(backoff)
+                logger.exception(f"WS unexpected error: {e}; reconnecting in {delay:.1f}s")
+                await asyncio.sleep(delay)
                 backoff = min(backoff * 2, RECONNECT_MAX_S)
+
+    @staticmethod
+    def _jitter(seconds: float) -> float:
+        # ±20% jitter — avoids thundering-herd reconnects after a server blip.
+        return seconds * (0.8 + 0.4 * random.random())
 
     # ── one connection lifetime ─────────────────────────────────────────────
 
@@ -99,7 +179,7 @@ class ComputeWSClient:
         ) as ws:
             self._ws = ws
 
-            # Hello
+            # Hello — last_ack_seq lets the server skip already-delivered events
             sys_info = get_system_info(self.gpu_enabled)
             hello = Hello(
                 node_id=self.node_id,
@@ -107,6 +187,11 @@ class ComputeWSClient:
                 vault={
                     "ibm": bool(self.config.get("ibm_api_token")),
                     "ionq": bool(self.config.get("ionq_api_key")),
+                },
+                last_ack_seq={
+                    exp_id: buf.last_ack_seq
+                    for exp_id, buf in self._buffers.items()
+                    if buf.last_ack_seq > 0
                 },
             )
             await ws.send(hello.model_dump_json())
@@ -125,6 +210,11 @@ class ComputeWSClient:
                 f"server_proto={registered.protocol_version}"
             )
 
+            # Replay any unacked events from prior connections. The server
+            # dedupes against last_seq, so duplicates from the seq.json hint
+            # are harmless.
+            await self._replay_unacked()
+
             pinger = asyncio.create_task(self._ping_loop(ws))
             try:
                 async for raw in ws:
@@ -136,15 +226,37 @@ class ComputeWSClient:
 
                     if isinstance(msg, ExperimentRequest):
                         asyncio.create_task(self._handle_experiment(msg))
+                    elif isinstance(msg, Ack):
+                        self._handle_ack(msg)
                     elif isinstance(msg, Ping):
-                        await self._send(Pong(ts_ms=msg.ts_ms))
+                        await self._send_raw(Pong(ts_ms=msg.ts_ms))
                     elif isinstance(msg, CancelExperiment):
                         self._cancelled.add(msg.experiment_id)
                         logger.info(f"Cancel requested for {msg.experiment_id[:8]}")
-                    # Ack / Pong — handled in PR3 (outbox); ignored here
+                    # Pong — handled implicitly (server-initiated; our Pings get Pongs back as Ack)
             finally:
                 pinger.cancel()
                 self._ws = None
+
+    async def _replay_unacked(self) -> None:
+        replayed = 0
+        for exp_id, buf in self._buffers.items():
+            for _seq, _kind, frame in list(buf.unacked):
+                await self._send_text(frame)
+                replayed += 1
+        if replayed:
+            logger.info(f"Replayed {replayed} unacked events on reconnect")
+
+    def _handle_ack(self, ack: Ack) -> None:
+        buf = self._buffers.get(ack.experiment_id)
+        if buf is None:
+            return
+        # Pop entries whose seq <= ack.last_seq
+        while buf.unacked and buf.unacked[0][0] <= ack.last_seq:
+            buf.unacked.popleft()
+        if ack.last_seq > buf.last_ack_seq:
+            buf.last_ack_seq = ack.last_seq
+            self._save_seq_state()
 
     # ── experiment dispatch ────────────────────────────────────────────────
 
@@ -183,10 +295,24 @@ class ComputeWSClient:
 
         loop = asyncio.get_running_loop()
         t0 = time.time()
+        cancel_check = self._make_cancel_check(req.experiment_id)
         try:
             result = await loop.run_in_executor(
-                self._executor, run_calculation, job_record, self.gpu_enabled
+                self._executor,
+                lambda: run_calculation(job_record, self.gpu_enabled, cancel_check=cancel_check),
             )
+        except TypeError:
+            # worker.run_calculation may not yet accept cancel_check kwarg
+            # (older bundled wheels). Fall back to the unhooked signature.
+            try:
+                result = await loop.run_in_executor(
+                    self._executor, run_calculation, job_record, self.gpu_enabled
+                )
+            except Exception as e:
+                await self._emit(req.experiment_id, "Error", {
+                    "message": str(e), "traceback": traceback.format_exc(),
+                })
+                return
         except Exception as e:
             await self._emit(req.experiment_id, "Error", {
                 "message": str(e),
@@ -194,9 +320,12 @@ class ComputeWSClient:
             })
             return
 
-        if req.experiment_id in self._cancelled:
+        if result.get("status") == "cancelled" or req.experiment_id in self._cancelled:
             self._cancelled.discard(req.experiment_id)
-            await self._emit(req.experiment_id, "Error", {"message": "Cancelled by user", "code": "cancelled"})
+            await self._emit(req.experiment_id, "Error", {
+                "message": result.get("error_message") or "Cancelled by user",
+                "code": "cancelled",
+            })
             return
 
         if result.get("status") == "failed":
@@ -219,11 +348,17 @@ class ComputeWSClient:
             "actual_backend": "kanad_compute",
         })
 
+    def _make_cancel_check(self, experiment_id: str):
+        cancelled = self._cancelled
+        return lambda: experiment_id in cancelled
+
     # ── outbound helpers ───────────────────────────────────────────────────
 
     async def _emit(self, experiment_id: str, kind: str, payload: dict[str, Any]) -> None:
-        seq = self._seq_by_exp.get(experiment_id, 0) + 1
-        self._seq_by_exp[experiment_id] = seq
+        buf = self._buffers.setdefault(experiment_id, _ExperimentBuffer())
+        seq = buf.next_seq
+        buf.next_seq = seq + 1
+
         ev = ExperimentEvent(
             experiment_id=experiment_id,
             seq=seq,
@@ -231,15 +366,36 @@ class ComputeWSClient:
             kind=kind,  # type: ignore[arg-type]
             payload=payload,
         )
-        await self._send(ev)
+        frame = ev.model_dump_json()
 
-    async def _send(self, msg: Any) -> None:
+        # Buffer + send. If the buffer is at capacity, drop oldest non-terminal
+        # entries to make room. Terminal events (FinalResult/Error) MUST land.
+        buf.unacked.append((seq, kind, frame))
+        if len(buf.unacked) > RING_MAX:
+            self._evict_old(buf)
+        await self._send_text(frame)
+
+    @staticmethod
+    def _evict_old(buf: _ExperimentBuffer) -> None:
+        # Walk from the head, drop the first non-terminal entry. If everything
+        # in the buffer is terminal (unlikely; means the server is wedged),
+        # leave it alone — back-pressure will eventually surface as a
+        # disconnect.
+        for i, (_seq, kind, _frame) in enumerate(buf.unacked):
+            if kind not in TERMINAL_KINDS:
+                del buf.unacked[i]
+                return
+
+    async def _send_raw(self, msg: Any) -> None:
+        await self._send_text(msg.model_dump_json())
+
+    async def _send_text(self, text: str) -> None:
         ws = self._ws
         if not ws:
             return
         async with self._send_lock:
             try:
-                await ws.send(msg.model_dump_json())
+                await ws.send(text)
             except ConnectionClosed:
                 pass
 
@@ -247,7 +403,7 @@ class ComputeWSClient:
         try:
             while True:
                 await asyncio.sleep(PING_INTERVAL_S)
-                await self._send(Ping(ts_ms=int(time.time() * 1000)))
+                await self._send_raw(Ping(ts_ms=int(time.time() * 1000)))
         except asyncio.CancelledError:
             return
 
