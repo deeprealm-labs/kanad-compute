@@ -87,12 +87,22 @@ Goal: kill the 2-second `/api/compute/jobs` polling loop in `remote_worker.py`. 
 
 ## 2. Phase 2 — Live progress, outbox, device-token auth
 
-### 2.1 Solver callback hooks (live `Progress` events)
-- [ ] Survey existing solvers: VQE, PhysicsVQE, HardwareVQE, SQD, qEOM — find iteration callback seams
-- [ ] Define a callback shape `(iteration, energy, gradient_norm, note)` — keep narrow, pure data
-- [ ] Thread an optional `progress_cb` through `worker.run_calculation`
-- [ ] Wire compute-side: `progress_cb = lambda **k: asyncio.run_coroutine_threadsafe(self._emit(exp_id, "Progress", k), loop)`
-- [ ] Wire browser-side: `connection_manager` already has `broadcast_progress`; verify front-end renders it
+### 2.1 Solver callback hooks (live `Progress` events) — Phase 2.1a (VQE + SQD)
+- [x] Survey existing solvers: VQESolver and SQDSolver already accept `solve(callback=...)` kwargs in kanad-core; PhysicsVQE / HardwareVQE / VarQITE / qEOM / EfficientVQE do not (carved into 2.1b)
+- [x] Protocol: `ProgressPayload.note` → `message`; new optional `gradient_norm` field
+- [x] Thread `progress_cb` kwarg through `worker.run_calculation` and into `_run_vqe` / `_run_sqd`
+- [x] Compute-side: `_make_progress_cb` factory bridges worker thread → asyncio loop via `run_coroutine_threadsafe`; throttle floor `PROGRESS_MIN_INTERVAL_MS=100`; energy-delta bypass `PROGRESS_ENERGY_DELTA=1e-4 Ha`; terminal flush before `FinalResult`
+- [x] Front-end already renders `progress` messages via `ExperimentMonitor.tsx` — no UI change required
+- [x] 28 (compute) + 15 (app) = 43 tests passing
+
+### 2.1b Solver callback hooks — remaining solvers (kanad-core PR)
+- [ ] Add `callback` kwarg to PhysicsVQE.solve()
+- [ ] Add `callback` kwarg to HardwareVQE.solve_local() / solve_hardware()
+- [ ] Add `callback` kwarg to VarQITESolver.solve() (per-step or every-N-steps)
+- [ ] Add `callback` kwarg to qEOMVQE.solve() (delegate to underlying VQE)
+- [ ] Expose internal callback as user-configurable param on EfficientVQE.solve()
+- [ ] Add adapters in `kanad-compute/kanad_compute/worker.py` mirroring `_adapt_vqe_progress` / `_adapt_sqd_progress`
+- [ ] Tier requirement: kanad-core ≥ X.Y to unlock per-iteration progress for these solvers
 
 ### 2.2 SQLite outbox (crash-resilient delivery)
 - [ ] Embed `sqlite3` outbox in compute: `events(experiment_id, seq, kind, payload_json, sent_at)`

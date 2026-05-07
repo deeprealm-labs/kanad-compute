@@ -121,7 +121,15 @@ class _BoundServer:
 @pytest.mark.asyncio
 async def test_dispatch_to_finalresult_roundtrip(tmp_path: Path, monkeypatch):
     # Stub worker.run_calculation so we don't drag pyscf/qiskit into the test.
-    def fake_run_calculation(job, gpu_enabled=False, *, cancel_check=None):
+    def fake_run_calculation(job, gpu_enabled=False, *, cancel_check=None, progress_cb=None):
+        # Simulate three solver iterations so we can verify Progress events
+        # arrive on the wire alongside FinalResult.
+        if progress_cb is not None:
+            for i in range(3):
+                progress_cb(iteration=i, energy=-1.80 - 0.02 * i)
+                # Stretch beyond the throttle so all three emit
+                import time as _t
+                _t.sleep(0.12)
         return {
             "status": "completed",
             "energy": -1.85,
@@ -173,6 +181,7 @@ async def test_dispatch_to_finalresult_roundtrip(tmp_path: Path, monkeypatch):
         kinds = [ev.get("kind") for ev in received if ev.get("type") == "ExperimentEvent"]
         assert "Log" in kinds, f"expected Log, got events: {received}"
         assert "FinalResult" in kinds, f"expected FinalResult, got events: {received}"
+        assert "Progress" in kinds, f"expected at least one Progress, got events: {received}"
 
         # Final payload integrity
         finals = [
