@@ -6,19 +6,17 @@ Connects to wss://kanad.xyz/api/compute/connect and:
   3. Replays any unacked events left over from a prior connection.
   4. Receives ExperimentRequest, runs it via worker.run_calculation in a
      thread, and streams ExperimentEvents (Log → FinalResult/Error) back.
-  5. Honours server Acks to trim its in-memory buffer and persist last_ack_seq.
+  5. Honours server Acks to drop outbox rows and persist last_ack_seq.
   6. Pong-replies to server Pings; sends own Pings to keep NATs alive.
 
 Reliability sketch:
-  - Per-experiment ring buffer of unacked events (RING_MAX entries).
-    When full, oldest non-terminal events (Log/Progress) are dropped;
-    FinalResult/Error are never dropped.
-  - last_ack_seq is persisted to ``~/.kanad-compute/state/seq.json`` (atomic
-    write via tmpfile + rename) so a process restart resumes correctly.
+  - Every event is persisted to a SQLite ``Outbox`` BEFORE the frame goes on
+    the wire. If the process crashes between record and send, the row is
+    still on disk and is replayed on reconnect.
+  - ``last_ack_seq`` is also persisted to ``~/.kanad-compute/state/seq.json``
+    (atomic tmpfile + rename) so Hello can populate it without scanning the
+    whole outbox at startup.
   - Reconnect uses exponential backoff (1s → 30s) with ±20% jitter.
-
-Phase 2 will replace the in-memory ring buffer with a SQLite outbox for
-crash-resilient delivery.
 """
 
 from __future__ import annotations
@@ -31,7 +29,6 @@ import random
 import threading
 import time
 import traceback
-from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Optional
@@ -39,6 +36,7 @@ from typing import Any, Optional
 import websockets
 from websockets.exceptions import ConnectionClosed
 
+from .outbox import Outbox
 from .protocol import (
     PROTOCOL_VERSION,
     Ack,
@@ -60,8 +58,6 @@ logger = logging.getLogger(__name__)
 PING_INTERVAL_S = 15
 RECONNECT_MIN_S = 1
 RECONNECT_MAX_S = 30
-RING_MAX = 100
-TERMINAL_KINDS = frozenset({"FinalResult", "Error"})
 
 # Progress event throttling. Solver callbacks can fire 100s of times per second
 # on small molecules; we drop emits that arrive within the time window unless
@@ -71,17 +67,19 @@ PROGRESS_ENERGY_DELTA = 1e-4   # Hartree
 
 
 class _ExperimentBuffer:
-    """Per-experiment outbox state.
+    """Per-experiment in-memory counters.
 
-    next_seq:      next seq to assign on _emit
-    unacked:       deque of (seq, kind, json_text) waiting for server Ack
-    last_ack_seq:  highest seq the server has acked (persisted to disk)
+    Durable unacked-event storage lives in the SQLite ``Outbox``. This class
+    only tracks fast in-memory state:
+
+    next_seq:      next seq to assign on _emit (monotonic, per-experiment)
+    last_ack_seq:  highest seq the server has acked (mirrored to seq.json so
+                   Hello.last_ack_seq can be sent without scanning the outbox)
     """
-    __slots__ = ("next_seq", "unacked", "last_ack_seq")
+    __slots__ = ("next_seq", "last_ack_seq")
 
     def __init__(self, next_seq: int = 1, last_ack_seq: int = 0):
         self.next_seq = next_seq
-        self.unacked: deque[tuple[int, str, str]] = deque()
         self.last_ack_seq = last_ack_seq
 
 
@@ -104,7 +102,8 @@ class ComputeWSClient:
         self._send_lock = asyncio.Lock()
         self._ws: Optional[websockets.WebSocketClientProtocol] = None
 
-        # State persistence: ~/.kanad-compute/state/seq.json (overridable for tests)
+        # State persistence: ~/.kanad-compute/state/{seq.json, outbox.db}
+        # State dir is overridable for tests.
         state_dir = config.get("state_dir") or (Path.home() / ".kanad-compute" / "state")
         self._state_dir = Path(state_dir)
         try:
@@ -112,6 +111,8 @@ class ComputeWSClient:
         except OSError as e:
             logger.warning(f"Could not create state dir {self._state_dir}: {e}")
         self._seq_path = self._state_dir / "seq.json"
+        self._outbox = Outbox(self._state_dir / "outbox.db")
+        self._outbox.gc()  # opportunistic 24h cleanup at startup
         self._load_seq_state()
 
     # ── persistence ────────────────────────────────────────────────────────
@@ -246,10 +247,9 @@ class ComputeWSClient:
 
     async def _replay_unacked(self) -> None:
         replayed = 0
-        for exp_id, buf in self._buffers.items():
-            for _seq, _kind, frame in list(buf.unacked):
-                await self._send_text(frame)
-                replayed += 1
+        for exp_id, _seq, _kind, frame in self._outbox.pending():
+            await self._send_text(frame)
+            replayed += 1
         if replayed:
             logger.info(f"Replayed {replayed} unacked events on reconnect")
 
@@ -257,9 +257,7 @@ class ComputeWSClient:
         buf = self._buffers.get(ack.experiment_id)
         if buf is None:
             return
-        # Pop entries whose seq <= ack.last_seq
-        while buf.unacked and buf.unacked[0][0] <= ack.last_seq:
-            buf.unacked.popleft()
+        self._outbox.ack(ack.experiment_id, ack.last_seq)
         if ack.last_seq > buf.last_ack_seq:
             buf.last_ack_seq = ack.last_seq
             self._save_seq_state()
@@ -457,23 +455,10 @@ class ComputeWSClient:
         )
         frame = ev.model_dump_json()
 
-        # Buffer + send. If the buffer is at capacity, drop oldest non-terminal
-        # entries to make room. Terminal events (FinalResult/Error) MUST land.
-        buf.unacked.append((seq, kind, frame))
-        if len(buf.unacked) > RING_MAX:
-            self._evict_old(buf)
+        # Persist BEFORE send. If we crash between record and send, the row
+        # is on disk and will be replayed on the next connect.
+        self._outbox.record(experiment_id, seq, kind, frame)
         await self._send_text(frame)
-
-    @staticmethod
-    def _evict_old(buf: _ExperimentBuffer) -> None:
-        # Walk from the head, drop the first non-terminal entry. If everything
-        # in the buffer is terminal (unlikely; means the server is wedged),
-        # leave it alone — back-pressure will eventually surface as a
-        # disconnect.
-        for i, (_seq, kind, _frame) in enumerate(buf.unacked):
-            if kind not in TERMINAL_KINDS:
-                del buf.unacked[i]
-                return
 
     async def _send_raw(self, msg: Any) -> None:
         await self._send_text(msg.model_dump_json())
