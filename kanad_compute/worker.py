@@ -41,6 +41,66 @@ def _check(cancel_check: Optional[Callable[[], bool]]) -> None:
         raise CancelledError("cancelled by user")
 
 
+def _adapt_vqe_progress(progress_cb):
+    """VQESolver invokes ``callback(iteration, energy, parameters)`` per
+    objective evaluation. Translate to our keyword-style progress_cb."""
+    if progress_cb is None:
+        return None
+
+    def cb(*args, **_):
+        if not args:
+            return
+        iteration = args[0]
+        energy = args[1] if len(args) > 1 else None
+        try:
+            progress_cb(
+                iteration=int(iteration),
+                energy=float(energy) if energy is not None else None,
+            )
+        except Exception:
+            pass
+
+    return cb
+
+
+def _adapt_sqd_progress(progress_cb):
+    """SQDSolver invokes ``callback(stage: int, energy: float, message: str)``
+    at five phase boundaries (0=HF, 1=basis, 2=projection, 3=diag, 4+=states).
+    Stage maps to ``iteration`` so the existing energy-vs-iteration chart
+    renders without front-end changes; the human-readable phase label rides
+    in ``message``."""
+    if progress_cb is None:
+        return None
+
+    def cb(*args, **_):
+        if not args:
+            return
+        stage = args[0]
+        energy = args[1] if len(args) > 1 else None
+        message = args[2] if len(args) > 2 else None
+        try:
+            progress_cb(
+                iteration=int(stage),
+                energy=float(energy) if energy is not None else None,
+                message=str(message) if message is not None else None,
+            )
+        except Exception:
+            pass
+
+    return cb
+
+
+def _solve_with_optional_callback(solver, cb):
+    """Call ``solver.solve(callback=cb)`` if it accepts the kwarg, else fall
+    back to the kwarg-less form. Bridges across kanad-core versions."""
+    if cb is None:
+        return solver.solve()
+    try:
+        return solver.solve(callback=cb)
+    except TypeError:
+        return solver.solve()
+
+
 def _build_bond(atoms: list[dict], basis: str = "sto-3g", charge: int = 0):
     """Build a Kanad bond/molecule from atom list."""
     from kanad import BondFactory
@@ -78,6 +138,7 @@ def run_calculation(
     gpu_enabled: bool = False,
     *,
     cancel_check: Optional[Callable[[], bool]] = None,
+    progress_cb: Optional[Callable[..., None]] = None,
 ) -> dict:
     """
     Run a Kanad calculation job. Returns result dict.
@@ -99,6 +160,12 @@ def run_calculation(
         the run aborted. Currently checked between major phases (build, solve,
         finalize); per-iteration cooperation lands in Phase 2 with the solver
         callback hooks.
+
+    progress_cb: optional kwargs-callable for live progress events. The WS
+        client passes a throttled, thread-safe closure that ships
+        ``ProgressPayload`` events to the cloud. Forwarded to per-solver
+        adapters that translate solver-native callback signatures to the
+        wire payload shape. Solvers without callback support ignore it.
     """
     t0 = time.time()
     result: dict[str, Any] = {
@@ -161,13 +228,14 @@ def run_calculation(
                 ibm_token=job.get("ibm_api_token"),
             )
         elif solver_type == "sqd":
-            sol_result = _run_sqd(atoms, basis, charge)
+            sol_result = _run_sqd(atoms, basis, charge, progress_cb=progress_cb)
         elif solver_type == "krylov_sqd":
             sol_result = _run_krylov_sqd(atoms, basis, charge)
         elif solver_type == "vqe":
             sol_result = _run_vqe(
                 atoms, basis, charge, backend,
                 max_iterations, ansatz_type,
+                progress_cb=progress_cb,
             )
         elif solver_type == "varqite":
             sol_result = _run_varqite(atoms, basis, charge, ansatz_type)
@@ -281,14 +349,19 @@ def _run_hybrid_subspace(atoms, basis, charge, backend, ibm_token=None) -> dict:
     }
 
 
-def _run_sqd(atoms, basis, charge) -> dict:
+def _run_sqd(atoms, basis, charge, *, progress_cb=None) -> dict:
     from kanad.solvers import SQDSolver
     bond = _build_bond(atoms, basis, charge)
     solver = SQDSolver(bond=bond)
-    res = solver.solve()
+    cb = _adapt_sqd_progress(progress_cb)
+    res = _solve_with_optional_callback(solver, cb)
+    # SQDSolver.solve returns a dict
+    energy = res["ground_state_energy"] if isinstance(res, dict) and "ground_state_energy" in res else getattr(res, "energy", None)
+    if energy is None and isinstance(res, dict):
+        energy = res.get("energy")
     return {
-        "energy": float(res.energy),
-        "error_mha": float(getattr(res, "error_mha", 0)),
+        "energy": float(energy) if energy is not None else None,
+        "error_mha": float(res.get("error_mha", 0)) if isinstance(res, dict) else float(getattr(res, "error_mha", 0)),
         "converged": True,
     }
 
@@ -305,14 +378,15 @@ def _run_krylov_sqd(atoms, basis, charge) -> dict:
     }
 
 
-def _run_vqe(atoms, basis, charge, backend, max_iter, ansatz_type) -> dict:
+def _run_vqe(atoms, basis, charge, backend, max_iter, ansatz_type, *, progress_cb=None) -> dict:
     from kanad.solvers import VQESolver
     bond = _build_bond(atoms, basis, charge)
     solver = VQESolver(
         bond, ansatz_type=ansatz_type,
         backend=backend, max_iterations=max_iter,
     )
-    res = solver.solve()
+    cb = _adapt_vqe_progress(progress_cb)
+    res = _solve_with_optional_callback(solver, cb)
     return {
         "energy": float(res["energy"]),
         "n_evaluations": int(res.get("n_evaluations", 0)),

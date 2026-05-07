@@ -63,6 +63,12 @@ RECONNECT_MAX_S = 30
 RING_MAX = 100
 TERMINAL_KINDS = frozenset({"FinalResult", "Error"})
 
+# Progress event throttling. Solver callbacks can fire 100s of times per second
+# on small molecules; we drop emits that arrive within the time window unless
+# the energy has improved by at least the delta threshold.
+PROGRESS_MIN_INTERVAL_MS = 100
+PROGRESS_ENERGY_DELTA = 1e-4   # Hartree
+
 
 class _ExperimentBuffer:
     """Per-experiment outbox state.
@@ -296,18 +302,35 @@ class ComputeWSClient:
         loop = asyncio.get_running_loop()
         t0 = time.time()
         cancel_check = self._make_cancel_check(req.experiment_id)
+        progress_cb = self._make_progress_cb(req.experiment_id, loop)
         try:
             result = await loop.run_in_executor(
                 self._executor,
-                lambda: run_calculation(job_record, self.gpu_enabled, cancel_check=cancel_check),
+                lambda: run_calculation(
+                    job_record, self.gpu_enabled,
+                    cancel_check=cancel_check, progress_cb=progress_cb,
+                ),
             )
         except TypeError:
-            # worker.run_calculation may not yet accept cancel_check kwarg
-            # (older bundled wheels). Fall back to the unhooked signature.
+            # worker.run_calculation may not yet accept progress_cb kwarg
+            # (older bundled wheels). Fall back through the legacy signatures.
             try:
                 result = await loop.run_in_executor(
-                    self._executor, run_calculation, job_record, self.gpu_enabled
+                    self._executor,
+                    lambda: run_calculation(
+                        job_record, self.gpu_enabled, cancel_check=cancel_check,
+                    ),
                 )
+            except TypeError:
+                try:
+                    result = await loop.run_in_executor(
+                        self._executor, run_calculation, job_record, self.gpu_enabled
+                    )
+                except Exception as e:
+                    await self._emit(req.experiment_id, "Error", {
+                        "message": str(e), "traceback": traceback.format_exc(),
+                    })
+                    return
             except Exception as e:
                 await self._emit(req.experiment_id, "Error", {
                     "message": str(e), "traceback": traceback.format_exc(),
@@ -335,6 +358,15 @@ class ComputeWSClient:
             })
             return
 
+        # Final-iteration flush: ensure the last progress frame the throttle
+        # may have dropped is actually delivered before FinalResult.
+        flush_state = getattr(progress_cb, "_state", None)
+        if flush_state is not None and flush_state["last_iteration"] >= 0:
+            payload: dict[str, Any] = {"iteration": flush_state["last_iteration"]}
+            if flush_state["last_energy"] is not None:
+                payload["energy"] = flush_state["last_energy"]
+            await self._emit(req.experiment_id, "Progress", payload)
+
         wall_ms = int((time.time() - t0) * 1000)
         await self._emit(req.experiment_id, "FinalResult", {
             "energy": result.get("energy"),
@@ -351,6 +383,63 @@ class ComputeWSClient:
     def _make_cancel_check(self, experiment_id: str):
         cancelled = self._cancelled
         return lambda: experiment_id in cancelled
+
+    def _make_progress_cb(self, experiment_id: str, loop: asyncio.AbstractEventLoop):
+        """Return a thread-safe callable for solvers to report progress.
+
+        The closure is invoked from the worker thread (where solvers run);
+        each call submits a coroutine to ``loop`` via run_coroutine_threadsafe.
+
+        Throttling rules:
+          - First call: always emits.
+          - Subsequent calls within PROGRESS_MIN_INTERVAL_MS: dropped, UNLESS
+            energy has improved by at least PROGRESS_ENERGY_DELTA.
+        """
+        state = {"last_ts": 0.0, "last_energy": None, "last_iteration": -1}
+
+        def cb(**kwargs: Any) -> None:
+            iteration = kwargs.get("iteration", state["last_iteration"] + 1)
+            energy = kwargs.get("energy")
+            message = kwargs.get("message")
+            gradient_norm = kwargs.get("gradient_norm")
+
+            now = time.time()
+            is_first = state["last_ts"] == 0.0
+            elapsed_ms = (now - state["last_ts"]) * 1000.0
+            time_pass = elapsed_ms >= PROGRESS_MIN_INTERVAL_MS
+            energy_pass = (
+                energy is not None
+                and state["last_energy"] is not None
+                and abs(float(energy) - float(state["last_energy"])) >= PROGRESS_ENERGY_DELTA
+            )
+
+            # Always update last_iteration so flush at end has the true terminal value
+            state["last_iteration"] = int(iteration)
+            if energy is not None:
+                state["last_energy"] = float(energy)
+
+            if not (is_first or time_pass or energy_pass):
+                return
+
+            state["last_ts"] = now
+
+            payload: dict[str, Any] = {"iteration": int(iteration)}
+            if energy is not None:
+                payload["energy"] = float(energy)
+            if gradient_norm is not None:
+                payload["gradient_norm"] = float(gradient_norm)
+            if message is not None:
+                payload["message"] = str(message)
+
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self._emit(experiment_id, "Progress", payload), loop
+                )
+            except Exception as e:
+                logger.debug(f"progress emit dropped for {experiment_id[:8]}: {e}")
+
+        cb._state = state  # type: ignore[attr-defined]
+        return cb
 
     # ── outbound helpers ───────────────────────────────────────────────────
 
