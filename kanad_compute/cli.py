@@ -316,5 +316,70 @@ def configure(ibm_token, ionq_key, max_qubits, gpu, port):
         console.print("[dim]No changes. Use --help to see options.[/dim]")
 
 
+@main.group()
+def creds():
+    """Manage local credential vault (OS keyring)."""
+    pass
+
+
+_VAULT_CHOICES = ("ibm_api_token", "ibm_crn", "ionq_api_key", "bluequbit_api_key")
+
+
+@creds.command("set")
+@click.argument("key", type=click.Choice(_VAULT_CHOICES))
+@click.option("--value", default=None, help="Value (prompted if omitted)")
+def creds_set(key, value):
+    """Store a credential in the OS keyring."""
+    from .vault import Vault, VaultError
+    if value is None:
+        value = click.prompt(f"Enter value for {key}", hide_input=True, confirmation_prompt=False)
+    try:
+        Vault().set(key, value)
+        console.print(f"[green]✓ stored {key}[/green]")
+    except VaultError as e:
+        console.print(f"[red]vault error: {e}[/red]")
+        raise SystemExit(1)
+
+
+@creds.command("get")
+@click.argument("key", type=click.Choice(_VAULT_CHOICES))
+@click.option("--reveal", is_flag=True, help="Print the full secret (default: last 4 chars only)")
+def creds_get(key, reveal):
+    """Read a credential from the vault. Hidden by default."""
+    from .vault import Vault
+    val = Vault().get(key)
+    if val is None:
+        console.print(f"[yellow]{key}: not set[/yellow]")
+        return
+    if reveal:
+        console.print(val)
+    else:
+        console.print(f"{key}: ****{val[-4:] if len(val) >= 4 else '****'}")
+
+
+@creds.command("list")
+def creds_list():
+    """List which logical credentials are present."""
+    from .vault import Vault
+    status = Vault().status()
+    table = Table(box=box.SIMPLE)
+    table.add_column("backend", style="cyan")
+    table.add_column("present")
+    for backend, ok in status.items():
+        table.add_row(backend, "[green]yes[/green]" if ok else "[dim]no[/dim]")
+    console.print(table)
+
+
+@creds.command("clear")
+@click.argument("key", type=click.Choice(_VAULT_CHOICES))
+def creds_clear(key):
+    """Remove a credential from the vault."""
+    from .vault import Vault
+    if Vault().clear(key):
+        console.print(f"[green]✓ cleared {key}[/green]")
+    else:
+        console.print(f"[yellow]{key}: nothing to clear[/yellow]")
+
+
 if __name__ == "__main__":
     main()

@@ -135,6 +135,7 @@ class Hello(BaseModel):
     protocol_version: str = PROTOCOL_VERSION
     node_id: str
     client_version: str = "0.1.0"
+    kanad_core_version: Optional[str] = None
     system_info: Optional[dict[str, Any]] = None
     vault: Optional[dict[str, bool]] = None
     last_ack_seq: dict[str, int] = Field(default_factory=dict)

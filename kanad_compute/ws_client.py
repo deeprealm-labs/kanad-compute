@@ -59,6 +59,44 @@ PING_INTERVAL_S = 15
 RECONNECT_MIN_S = 1
 RECONNECT_MAX_S = 30
 
+
+def _kanad_core_version() -> Optional[str]:
+    """Best-effort lookup of the kanad-core package version.
+
+    Cloud uses this to surface compatibility info on the admin status page
+    and to refuse jobs that need a newer solver schema. Returns None if
+    kanad-core isn't installed (e.g. tests stubbing the worker).
+    """
+    try:
+        import kanad
+        return getattr(kanad, "__version__", None)
+    except Exception:
+        return None
+
+
+def _vault_status(config: dict) -> dict[str, bool]:
+    """Hello.vault: prefer real keyring presence, fall back to config dict.
+
+    Phase 2.4 stores creds in the OS keyring. Older configs that pass tokens
+    via init args still work — config presence counts for the same logical
+    backend.
+    """
+    status: dict[str, bool] = {}
+    try:
+        from .vault import Vault
+        status = Vault().status()
+    except Exception as e:
+        logger.debug(f"vault status unavailable: {e}")
+    # Config-based fallback merges in OR: a config-provided IBM token is as
+    # good as a vaulted one for "do you have IBM creds at all" purposes.
+    if config.get("ibm_api_token"):
+        status["ibm"] = True
+    if config.get("ionq_api_key"):
+        status["ionq"] = True
+    if config.get("bluequbit_api_key"):
+        status["bluequbit"] = True
+    return status
+
 # Progress event throttling. Solver callbacks can fire 100s of times per second
 # on small molecules; we drop emits that arrive within the time window unless
 # the energy has improved by at least the delta threshold.
@@ -191,10 +229,8 @@ class ComputeWSClient:
             hello = Hello(
                 node_id=self.node_id,
                 system_info=sys_info,
-                vault={
-                    "ibm": bool(self.config.get("ibm_api_token")),
-                    "ionq": bool(self.config.get("ionq_api_key")),
-                },
+                kanad_core_version=_kanad_core_version(),
+                vault=_vault_status(self.config),
                 last_ack_seq={
                     exp_id: buf.last_ack_seq
                     for exp_id, buf in self._buffers.items()
@@ -278,7 +314,18 @@ class ComputeWSClient:
         # Build the dict shape worker.run_calculation expects.
         # MoleculeSpec.atoms is list[Atom]; flatten to {symbol, position} dicts.
         atoms = [{"symbol": a.symbol, "position": a.position} for a in req.molecule.atoms]
-        creds = req.backend_credentials or {}
+        # Credentials: prefer the local vault (Phase 2.4) over the wire-provided
+        # ones (Phase 1 fallback). Cloud will eventually stop sending creds at
+        # all; until then a vaulted secret wins.
+        wire_creds = req.backend_credentials or {}
+        creds = dict(wire_creds)
+        try:
+            from .vault import Vault
+            for key, val in Vault().all().items():
+                if val:
+                    creds[key] = val
+        except Exception as e:
+            logger.debug(f"vault read failed during dispatch: {e}")
         job_record = {
             "job_id": req.experiment_id,
             "atoms": atoms,

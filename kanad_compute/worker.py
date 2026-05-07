@@ -101,6 +101,48 @@ def _solve_with_optional_callback(solver, cb):
         return solver.solve()
 
 
+def _adapt_generic_progress(progress_cb):
+    """Forward-compatible adapter for solvers whose callback signature is not
+    yet finalized (Phase 2.1b kanad-core PR). Accepts any positional/keyword
+    shape and forwards what looks like ``(iteration, energy, *)``.
+
+    Used by PhysicsVQE / HardwareVQE / VarQITE / qEOM / EfficientVQE: each
+    of those solvers will gain a ``callback`` kwarg in a future kanad-core
+    release. Until then ``_solve_with_optional_callback`` swallows the
+    TypeError and we no-op, matching today's behaviour. Once the kwarg
+    lands, no compute-side change is needed — the adapter starts forwarding
+    automatically.
+    """
+    if progress_cb is None:
+        return None
+
+    def cb(*args, **kwargs):
+        iteration = kwargs.get("iteration")
+        energy = kwargs.get("energy")
+        message = kwargs.get("message") or kwargs.get("note")
+        # Tolerate positional invocations: (iteration, energy[, message|params])
+        if iteration is None and args:
+            iteration = args[0]
+        if energy is None and len(args) > 1:
+            energy = args[1]
+        if message is None and len(args) > 2 and isinstance(args[2], str):
+            message = args[2]
+        try:
+            kw = {}
+            if iteration is not None:
+                kw["iteration"] = int(iteration)
+            if energy is not None:
+                kw["energy"] = float(energy)
+            if message is not None:
+                kw["message"] = str(message)
+            if kw:
+                progress_cb(**kw)
+        except Exception:
+            pass
+
+    return cb
+
+
 def _build_bond(atoms: list[dict], basis: str = "sto-3g", charge: int = 0):
     """Build a Kanad bond/molecule from atom list."""
     from kanad import BondFactory
@@ -216,21 +258,24 @@ def run_calculation(
                 max_iterations, max_excitations,
                 ibm_token=job.get("ibm_api_token"),
                 ionq_key=job.get("ionq_api_key"),
+                progress_cb=progress_cb,
             )
         elif solver_type == "hardware_vqe":
             sol_result = _run_hardware_vqe(
                 atoms, basis, charge, backend,
                 ibm_token=job.get("ibm_api_token"),
+                progress_cb=progress_cb,
             )
         elif solver_type == "hybrid_subspace":
             sol_result = _run_hybrid_subspace(
                 atoms, basis, charge, backend,
                 ibm_token=job.get("ibm_api_token"),
+                progress_cb=progress_cb,
             )
         elif solver_type == "sqd":
             sol_result = _run_sqd(atoms, basis, charge, progress_cb=progress_cb)
         elif solver_type == "krylov_sqd":
-            sol_result = _run_krylov_sqd(atoms, basis, charge)
+            sol_result = _run_krylov_sqd(atoms, basis, charge, progress_cb=progress_cb)
         elif solver_type == "vqe":
             sol_result = _run_vqe(
                 atoms, basis, charge, backend,
@@ -238,18 +283,19 @@ def run_calculation(
                 progress_cb=progress_cb,
             )
         elif solver_type == "varqite":
-            sol_result = _run_varqite(atoms, basis, charge, ansatz_type)
+            sol_result = _run_varqite(atoms, basis, charge, ansatz_type, progress_cb=progress_cb)
         elif solver_type == "qeom":
-            sol_result = _run_qeom(atoms, basis, charge)
+            sol_result = _run_qeom(atoms, basis, charge, progress_cb=progress_cb)
         elif solver_type == "efficient_vqe":
-            sol_result = _run_efficient_vqe(atoms, basis, charge, max_iterations)
+            sol_result = _run_efficient_vqe(atoms, basis, charge, max_iterations, progress_cb=progress_cb)
         elif solver_type == "excited_states":
-            sol_result = _run_excited_states(atoms, basis, charge)
+            sol_result = _run_excited_states(atoms, basis, charge, progress_cb=progress_cb)
         else:
             # Default to physics_vqe
             sol_result = _run_physics_vqe(
                 atoms, basis, charge, backend,
                 max_iterations, max_excitations,
+                progress_cb=progress_cb,
             )
 
         result.update(sol_result)
@@ -277,7 +323,7 @@ def run_calculation(
 
 def _run_physics_vqe(
     atoms, basis, charge, backend, max_iter, max_exc,
-    ibm_token=None, ionq_key=None,
+    ibm_token=None, ionq_key=None, *, progress_cb=None,
 ) -> dict:
     from kanad.solvers import PhysicsVQE
 
@@ -292,7 +338,7 @@ def _run_physics_vqe(
         kwargs["ionq_api_key"] = ionq_key
 
     solver = PhysicsVQE(**kwargs)
-    res = solver.solve()
+    res = _solve_with_optional_callback(solver, _adapt_generic_progress(progress_cb))
 
     history = []
     if hasattr(solver, "_energy_history"):
@@ -312,18 +358,25 @@ def _run_physics_vqe(
     }
 
 
-def _run_hardware_vqe(atoms, basis, charge, backend, ibm_token=None) -> dict:
+def _run_hardware_vqe(atoms, basis, charge, backend, ibm_token=None, *, progress_cb=None) -> dict:
     from kanad.solvers import HardwareVQE
 
     bond = _build_bond(atoms, basis, charge)
     solver = HardwareVQE(bond=bond, circuit_type="hea")
 
+    cb = _adapt_generic_progress(progress_cb)
     if backend == "ibm_quantum" and ibm_token:
         from kanad.backends.ibm import IBMBackend
         ibm = IBMBackend(api_token=ibm_token)
-        res = solver.solve_hardware(ibm)
+        try:
+            res = solver.solve_hardware(ibm, callback=cb) if cb else solver.solve_hardware(ibm)
+        except TypeError:
+            res = solver.solve_hardware(ibm)
     else:
-        res = solver.solve_local()
+        try:
+            res = solver.solve_local(callback=cb) if cb else solver.solve_local()
+        except TypeError:
+            res = solver.solve_local()
 
     return {
         "energy": float(res.energy),
@@ -333,12 +386,12 @@ def _run_hardware_vqe(atoms, basis, charge, backend, ibm_token=None) -> dict:
     }
 
 
-def _run_hybrid_subspace(atoms, basis, charge, backend, ibm_token=None) -> dict:
+def _run_hybrid_subspace(atoms, basis, charge, backend, ibm_token=None, *, progress_cb=None) -> dict:
     from kanad.solvers import HybridSubspaceVQE
 
     bond = _build_bond(atoms, basis, charge)
     solver = HybridSubspaceVQE(bond=bond)
-    res = solver.solve()
+    res = _solve_with_optional_callback(solver, _adapt_generic_progress(progress_cb))
 
     return {
         "energy": float(res.energy),
@@ -366,11 +419,11 @@ def _run_sqd(atoms, basis, charge, *, progress_cb=None) -> dict:
     }
 
 
-def _run_krylov_sqd(atoms, basis, charge) -> dict:
+def _run_krylov_sqd(atoms, basis, charge, *, progress_cb=None) -> dict:
     from kanad.solvers import KrylovSQDSolver
     bond = _build_bond(atoms, basis, charge)
     solver = KrylovSQDSolver(bond=bond)
-    res = solver.solve()
+    res = _solve_with_optional_callback(solver, _adapt_generic_progress(progress_cb))
     return {
         "energy": float(res.energy),
         "error_mha": float(getattr(res, "error_mha", 0)),
@@ -394,33 +447,33 @@ def _run_vqe(atoms, basis, charge, backend, max_iter, ansatz_type, *, progress_c
     }
 
 
-def _run_varqite(atoms, basis, charge, ansatz_type) -> dict:
+def _run_varqite(atoms, basis, charge, ansatz_type, *, progress_cb=None) -> dict:
     from kanad.solvers import VarQITESolver
     bond = _build_bond(atoms, basis, charge)
     solver = VarQITESolver(bond=bond)
-    res = solver.solve()
+    res = _solve_with_optional_callback(solver, _adapt_generic_progress(progress_cb))
     return {
         "energy": float(res.energy),
         "converged": True,
     }
 
 
-def _run_qeom(atoms, basis, charge) -> dict:
+def _run_qeom(atoms, basis, charge, *, progress_cb=None) -> dict:
     from kanad.solvers import qEOMVQE
     bond = _build_bond(atoms, basis, charge)
     solver = qEOMVQE(bond=bond)
-    res = solver.solve()
+    res = _solve_with_optional_callback(solver, _adapt_generic_progress(progress_cb))
     return {
         "energy": float(res.energy),
         "converged": True,
     }
 
 
-def _run_efficient_vqe(atoms, basis, charge, max_iter) -> dict:
+def _run_efficient_vqe(atoms, basis, charge, max_iter, *, progress_cb=None) -> dict:
     from kanad.solvers import EfficientVQE
     bond = _build_bond(atoms, basis, charge)
     solver = EfficientVQE(bond=bond)
-    res = solver.solve()
+    res = _solve_with_optional_callback(solver, _adapt_generic_progress(progress_cb))
     return {
         "energy": float(res.energy),
         "error_mha": float(getattr(res, "error_mha", 0)),
@@ -429,11 +482,11 @@ def _run_efficient_vqe(atoms, basis, charge, max_iter) -> dict:
     }
 
 
-def _run_excited_states(atoms, basis, charge) -> dict:
+def _run_excited_states(atoms, basis, charge, *, progress_cb=None) -> dict:
     from kanad.solvers import ExcitedStatesSolver
     bond = _build_bond(atoms, basis, charge)
     solver = ExcitedStatesSolver(bond=bond)
-    res = solver.solve()
+    res = _solve_with_optional_callback(solver, _adapt_generic_progress(progress_cb))
     return {
         "energy": float(res.ground_energy) if hasattr(res, "ground_energy") else float(res.energy),
         "converged": True,

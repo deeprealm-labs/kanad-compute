@@ -96,12 +96,12 @@ Goal: kill the 2-second `/api/compute/jobs` polling loop in `remote_worker.py`. 
 - [x] 28 (compute) + 15 (app) = 43 tests passing
 
 ### 2.1b Solver callback hooks — remaining solvers (kanad-core PR)
-- [ ] Add `callback` kwarg to PhysicsVQE.solve()
-- [ ] Add `callback` kwarg to HardwareVQE.solve_local() / solve_hardware()
-- [ ] Add `callback` kwarg to VarQITESolver.solve() (per-step or every-N-steps)
-- [ ] Add `callback` kwarg to qEOMVQE.solve() (delegate to underlying VQE)
-- [ ] Expose internal callback as user-configurable param on EfficientVQE.solve()
-- [ ] Add adapters in `kanad-compute/kanad_compute/worker.py` mirroring `_adapt_vqe_progress` / `_adapt_sqd_progress`
+- [x] Adapter scaffolding in `kanad_compute/worker.py`: `_adapt_generic_progress` + `progress_cb` plumbed through every `_run_*` helper. Today these no-op (TypeError swallowed by `_solve_with_optional_callback`); they start producing Progress events automatically once kanad-core lands the kwarg
+- [ ] kanad-core PR: add `callback` kwarg to PhysicsVQE.solve()
+- [ ] kanad-core PR: add `callback` kwarg to HardwareVQE.solve_local() / solve_hardware() (positional `callback=cb` already attempted with TypeError fallback)
+- [ ] kanad-core PR: add `callback` kwarg to VarQITESolver.solve() (per-step or every-N-steps)
+- [ ] kanad-core PR: add `callback` kwarg to qEOMVQE.solve() (delegate to underlying VQE)
+- [ ] kanad-core PR: expose internal callback as user-configurable param on EfficientVQE.solve()
 - [ ] Tier requirement: kanad-core ≥ X.Y to unlock per-iteration progress for these solvers
 
 ### 2.2 SQLite outbox (crash-resilient delivery)
@@ -122,10 +122,12 @@ Goal: kill the 2-second `/api/compute/jobs` polling loop in `remote_worker.py`. 
 - [ ] Revocation: dashboard page listing connected devices with "revoke" button
 
 ### 2.4 Local credential vault
-- [ ] Pick library per OS: `keyring` (Python) for v1; switch to Rust `keyring`+`secretstore` crates in Phase 3
-- [ ] Encrypted file fallback when no keyring: AES-256-GCM, key derived via Argon2id from a passphrase prompted on first use
-- [ ] CLI: `kanad-compute creds set ibm`, `... set ionq`, `... rotate`, `... clear`
-- [ ] Vault state surfaced in `Hello.vault = {"ibm": bool, "ionq": bool}` (already in protocol — wire the read)
+- [x] `kanad_compute/vault.py` wraps `keyring` (OS keychain on macOS / Credential Manager on Windows / Secret Service on Linux). API: `set/get/has/clear/status/all/list_present`
+- [x] CLI: `kanad-compute creds set/get/list/clear` (Click subgroup); reveal-flag controls full-token print vs `****<last4>` redaction
+- [x] Vault state surfaced in `Hello.vault` from real keyring presence (config-dict fallback merged in for backwards-compat)
+- [x] Worker prefers vaulted credentials over wire-provided ones during dispatch; cloud can stop sending creds once all users have populated vaults
+- [x] 8 vault tests with an in-memory keyring backend
+- [ ] Encrypted file fallback when no keyring backend exists: AES-256-GCM, Argon2id-derived key (deferred — `keyring` already covers macOS / Windows / mainstream Linux desktop; headless Linux is a separate UX problem)
 - [ ] Cloud-side enforcement: if `ExperimentRequest.backend in {"ibm", "ionq"}` and `Hello.vault[backend]` is False, fail-fast with a clear error before dispatching
 
 ### 2.5 Cancellation
@@ -210,10 +212,10 @@ Once Rust compute is the default and stable:
 
 ## 6. Decisions still open
 
-- [!] **Multi-node per user.** Pick: (a) reject 2nd connection, (b) round-robin, (c) pin per-experiment, (d) per-user "default node" + override. Default suggestion: (a) until a real use-case forces (c).
+- [x] **Multi-node per user (decided 2026-05).** "Bump previous session." When a new connection arrives for a user with an existing session, the old WS is closed (1001 GOING_AWAY, reason=`superseded`) and replaced. Rationale: reconnect after a network blip arrives BEFORE the dead session's heartbeat times out (~30 s), so rejecting the new connection would force the user to wait through that window. Matches `gh auth login` / `claude login` conventions. Multi-device support proper arrives with device-token auth (2.3).
 - [!] **Browser Path A (direct localhost) vs Path B (proxy).** Path A needs CORS + self-signed-cert UX or a localhost-trusted-origin trick; Path B is a non-decision (works today). Default: ship Path B in Phase 1, evaluate Path A demand.
 - [!] **Where do TUI logs come from?** Same outbox table read by gateway, or a separate `logs` ring buffer? Decide before starting 3.4.
-- [!] **Solver versioning.** When compute runs an old kanad-core but cloud expects new fields, who breaks? Embed `kanad_core_version` in `Hello` and let cloud refuse incompatible jobs.
+- [x] **Solver versioning (decided 2026-05).** `kanad_core_version` is now sent in `Hello` and surfaced in `/api/admin/compute_status`. Logged on connect. Server-side refusal of incompatible jobs is deferred until a real version-skew incident; today's failure mode (mismatched fields) surfaces clearly via solver TypeError on dispatch.
 
 ---
 
