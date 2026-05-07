@@ -32,46 +32,51 @@ Goal: kill the 2-second `/api/compute/jobs` polling loop in `remote_worker.py`. 
 ### 1.1 Wire protocol (Pydantic)
 - [x] `kanad-app/api/protocol.py` — server-side schema
 - [x] `kanad-compute/kanad_compute/protocol.py` — client-side mirror
-- [x] Discriminated unions: `Hello | Registered | ExperimentRequest | CancelExperiment | Ping | Pong` (server) and `Hello | ExperimentEvent | Ping | Pong` (client)
-- [x] `ExperimentEvent` carries `experiment_id`, monotonic `seq`, `ts_ms`, `kind ∈ {Log, Progress, PartialResult, FinalResult, Error}`, `payload`
-- [ ] Versioning: bake `protocol_version` into `Hello` / `Registered` and reject mismatches above MAJOR
-- [ ] Add `Ack` server→client message carrying `last_seq` per experiment (prereq for outbox replay in 4.3)
+- [x] Discriminated unions: `Hello | Registered | ExperimentRequest | CancelExperiment | Ack | Ping | Pong` (server) and `Hello | ExperimentEvent | Ping | Pong` (client)
+- [x] `ExperimentEvent` carries `experiment_id`, monotonic `seq`, `ts_ms`, `kind ∈ {Log, Progress, PartialResult, FinalResult, Error}`, `payload` (validated against `kind`)
+- [x] Versioning: `protocol_version` in `Hello`/`Registered`; server rejects MAJOR mismatch with close 1003
+- [x] `Ack` server→client message carrying `last_seq` per experiment (drives outbox trim on the client)
+- [x] `model_config = ConfigDict(extra="forbid")` on every message — typos surface as parse errors
+- [x] Typed `MoleculeSpec` / `SolverSpec` / `Atom` sub-models on `ExperimentRequest`
 
 ### 1.2 Server endpoint (kanad-app)
 - [x] `api/routes/compute_ws.py` — `WebSocket /api/compute/connect`
 - [x] `NodeSession` dataclass + in-memory `NODE_REGISTRY: dict[user_id, NodeSession]`
 - [x] Bearer-token auth resolving `User.kanad_compute_key → user_id`
 - [x] Handshake (`Hello` first, then `Registered`), 15-s `Ping`, 2-miss disconnect
-- [x] Public API `dispatch_experiment_to_user(user_id, ExperimentRequest) -> bool`
+- [x] Public API `dispatch_experiment_to_user(user_id, ExperimentRequest) -> bool` and `dispatch_cancel_to_user`
 - [x] Per-experiment `seq` dedup; fan-out via `connection_manager.send_to_job(experiment_id, ...)` with lowercased `type`
-- [x] Terminal-event persistence (`FinalResult` / `Error` → `Job` row with `COMPLETED` / `FAILED`)
+- [x] Terminal-event persistence via centralized `transition_job` (race-safe vs CANCELLED)
 - [x] Router registered in `api/main.py`
-- [ ] Multi-node-per-user support (today: one node wins, later sessions overwrite). Decide: reject second login OR round-robin OR pin per experiment.
-- [ ] Resume on reconnect: honour `Hello.last_ack_seq` to suppress already-delivered events
-- [ ] Metrics: connected nodes, in-flight experiments, ping RTT — expose via `/api/admin/compute_status`
+- [x] Resume on reconnect: honour `Hello.last_ack_seq`; suppress already-delivered events
+- [x] `Ack` sent back to client on every successful event handle (drives client outbox trim)
+- [x] Metrics: `/api/admin/compute_status` returns `{user_id, node_id, session_id, connected_since, last_rtt_ms, in_flight_count}`
+- [x] Single-worker startup warning when `WEB_CONCURRENCY > 1`
+- [x] Fan-out failures wrapped — dead browser doesn't kill the WS handler
+- [ ] Multi-node-per-user support (Phase 2 with device-token migration; current behaviour: bump previous session)
 
 ### 1.3 Client (kanad-compute)
-- [x] `kanad_compute/ws_client.py` — `ComputeWSClient` with reconnect (1 s → 30 s exponential backoff)
-- [x] Hello → Registered handshake; `additional_headers={Authorization: Bearer …}`
-- [x] `_handle_experiment` builds the dict shape `worker.run_calculation` expects, runs in `ThreadPoolExecutor`
-- [x] Phase-1 events: `Log` start + `FinalResult` or `Error`
+- [x] `kanad_compute/ws_client.py` — `ComputeWSClient` with reconnect (1 s → 30 s exponential backoff, ±20 % jitter)
+- [x] Hello → Registered handshake with `protocol_version` check; `Authorization: Bearer …` header
+- [x] `_handle_experiment` consumes typed `MoleculeSpec` / `SolverSpec`, runs `worker.run_calculation` in `ThreadPoolExecutor`
+- [x] Phase-1 events: `Log` start + `FinalResult` / `Error` / cancelled
 - [x] `_send` lock for atomic frame writes; `_emit` increments per-experiment seq
 - [x] `_ping_loop` 15 s; URL translation `http(s)://` → `ws(s)://`
 - [x] `kanad-compute connect [--url URL]` CLI subcommand
-- [x] `websockets>=12.0` added to `pyproject.toml`
-- [ ] Persist `last_seq_by_exp` to disk so reconnect can fill `Hello.last_ack_seq`
-- [ ] Honour `CancelExperiment` mid-run (today: only checked post-hoc; needs cooperative interrupt on the worker thread)
-- [ ] Smoke test inside the project venv (currently only `py_compile`-validated)
+- [x] `websockets>=12.0`, `pytest`, `pytest-asyncio` in `pyproject.toml`
+- [x] Persist `last_ack_seq` to `~/.kanad-compute/state/seq.json` (atomic tmpfile+rename); populates `Hello.last_ack_seq` on reconnect
+- [x] In-memory ring buffer of unacked events (RING_MAX=100), replayed on reconnect, trimmed on `Ack`
+- [x] Backpressure: drop oldest non-terminal events; `FinalResult`/`Error` never dropped
+- [x] Honour `CancelExperiment` via cooperative `cancel_check` callable threaded through `worker.run_calculation`
+- [x] 22 pytest tests including a real WS server smoke test
 
 ### 1.4 Dispatch hook (kanad-app `calculations.py`)
-- [~] Add async helper `_try_ws_dispatch(user_id, calc_id, config, molecule) -> bool`
-  - Returns False if `config.backend != "kanad_compute"` OR `user_id not in NODE_REGISTRY`
-  - Builds `ExperimentRequest` from molecule (atoms, basis, charge) + config (solver, max_iterations, max_excitations, ansatz)
-  - Calls `dispatch_experiment_to_user(...)`
-  - On success: transition `Job` PENDING → RUNNING in a separate `get_db_context()` write
-- [~] Edit `submit_calculation` (lines 372-485): between `db.commit()` (~L475) and `background_tasks.add_task(run_calculation, calc_id)` (~L478), guard the BG task with `if not ws_dispatched:`
-- [ ] `python3 -m py_compile api/routes/calculations.py` — syntax-validate
-- [ ] Manual end-to-end: connect compute, submit job, observe browser receives logs/result without ever hitting the polling endpoints
+- [x] New module `api/routes/_compute_dispatch.py` with `_build_experiment_request` + `_try_ws_dispatch`
+- [x] Edits `submit_calculation` (L474-489): WS dispatch first, polling-task fallback if no live session
+- [x] On success: `Job` transitions PENDING → RUNNING via `transition_job` in a separate `get_db_context()` write
+- [x] Credentials resolved via existing `_resolve_credential` (Phase 2 will move them into the local vault)
+- [x] py_compile clean on every touched file; pytest covers dispatch + persist + dedup + cancel race
+- [ ] **Manual end-to-end** per `kanad-app/docs/compute_ws_smoke.md` — needs a running Postgres + a real molecule; not yet executed by this session
 
 ### 1.5 Graceful coexistence with old polling path
 - [ ] Keep `/api/compute/jobs` polling endpoints alive throughout Phase 1 — old `remote_worker.py` must still function for users on stale `kanad-compute` versions
@@ -198,9 +203,15 @@ Once Rust compute is the default and stable:
 
 ---
 
-## 7. Immediate next actions (this week)
+## 7. Immediate next actions
 
-1. Finish 1.4 — write `_try_ws_dispatch`, edit `submit_calculation`, py_compile
-2. Smoke-test the WS pipeline end-to-end against a local kanad-app
-3. Decide on 6.* open questions before sketching Phase 2
-4. File the Phase-2 epic on `mk0dz/kanad-app` so issue #16 has trackable children
+Phase 1 (issue #16, WS gateway) is **code-complete and test-covered**. Three PRs landed across both repos:
+- `kanad-compute`: `add ws gateway client` → `harden ws client outbox` → `add ws client tests`
+- `kanad-app`: `add ws gateway endpoint` → `add job transition helper` → `harden compute ws endpoint` → `wire dispatch hook` → `add ws gateway tests`
+
+Tests: 22 (compute) + 14 (app) = **36 passing**. Includes real-uvicorn WS smoke, dispatch round-trip, dedup-on-reconnect, cancel-race, and outbox/seq persistence.
+
+Remaining before declaring Phase 1 done:
+1. Manual e2e against a real Postgres + real molecule per `kanad-app/docs/compute_ws_smoke.md`
+2. File the Phase-2 epic on `mk0dz/kanad-app` so issue #16 has trackable children for live `Progress`, SQLite outbox, RFC 8628 device auth, local vault
+3. Decide §6 open questions (multi-node-per-user, Path A vs B, log source for TUI, solver versioning) before starting Phase 2 work
