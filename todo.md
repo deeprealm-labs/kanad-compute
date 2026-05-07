@@ -105,10 +105,13 @@ Goal: kill the 2-second `/api/compute/jobs` polling loop in `remote_worker.py`. 
 - [ ] Tier requirement: kanad-core ≥ X.Y to unlock per-iteration progress for these solvers
 
 ### 2.2 SQLite outbox (crash-resilient delivery)
-- [ ] Embed `sqlite3` outbox in compute: `events(experiment_id, seq, kind, payload_json, sent_at)`
-- [ ] On `_emit`: insert THEN send; on `Ack`: delete up to `last_seq`
-- [ ] On reconnect: replay unacked events before processing new requests
-- [ ] Retention: GC events older than 24h regardless of ack status (defensive)
+- [x] `kanad_compute/outbox.py` — `Outbox(path)` with WAL journaling, threading lock, `record / ack / pending / pending_count / gc / close`
+- [x] `_emit`: insert THEN send (durable on disk before going on the wire)
+- [x] `_handle_ack`: `outbox.ack(exp_id, last_seq)`; `last_ack_seq` mirrored to seq.json so Hello populates fast
+- [x] `_replay_unacked`: drains `outbox.pending()` ordered by `(exp_id, seq)` after Registered
+- [x] Retention: `outbox.gc(older_than_seconds=86400)` runs once at startup; defensive cleanup against runaway state
+- [x] Replaces the in-memory ring buffer entirely; `_ExperimentBuffer.unacked` removed; `_evict_old` removed
+- [x] 7 outbox tests (durability, concurrent record, ack semantics, gc, ordering)
 
 ### 2.3 RFC 8628 device authorization grant
 - [ ] `POST /api/auth/device/code` → returns `device_code, user_code, verification_uri, interval, expires_in`
@@ -126,8 +129,9 @@ Goal: kill the 2-second `/api/compute/jobs` polling loop in `remote_worker.py`. 
 - [ ] Cloud-side enforcement: if `ExperimentRequest.backend in {"ibm", "ionq"}` and `Hello.vault[backend]` is False, fail-fast with a clear error before dispatching
 
 ### 2.5 Cancellation
-- [ ] Cooperative interrupt: solver checks a `should_stop()` flag every iteration
-- [ ] Browser → app `CancelJob` over the existing `/ws/jobs/{id}` socket already triggers DB cancel; extend to also call `dispatch_cancel_to_user(user_id, experiment_id)` over the compute WS
+- [x] Cooperative interrupt on compute side: `cancel_check` callable threaded through `worker.run_calculation`, checked between major phases (Phase 1)
+- [x] App-side cancel propagation: `POST /api/calculations/{id}/cancel` now also calls `dispatch_cancel_to_user(user_id, calc_id)` (no-op if no live session) and transitions Job to CANCELLED via `transition_job` for terminal-state safety against late FinalResult arrivals
+- [ ] Per-iteration `should_stop()` flag inside solvers themselves — covered by the kanad-core 2.1b PR (each solver's iteration loop checks the same flag passed via `cancel_check`)
 
 ---
 
