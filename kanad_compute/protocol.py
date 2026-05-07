@@ -45,7 +45,8 @@ class ProgressPayload(BaseModel):
     iteration: int
     total: Optional[int] = None
     energy: Optional[float] = None
-    note: Optional[str] = None
+    gradient_norm: Optional[float] = None
+    message: Optional[str] = None
 
 
 class PartialResultPayload(BaseModel):
