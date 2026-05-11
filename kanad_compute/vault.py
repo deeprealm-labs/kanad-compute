@@ -34,6 +34,9 @@ CANONICAL_KEYS: tuple[str, ...] = (
     "ibm_crn",
     "ionq_api_key",
     "bluequbit_api_key",
+    # Device-auth access token minted via /api/auth/device/token. Used as the
+    # Bearer credential for the WS gateway in place of ``kanad_compute_key``.
+    "kanad_access_token",
 )
 
 # Logical → canonical mapping for Hello.vault

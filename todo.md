@@ -110,12 +110,14 @@ Goal: kill the 2-second `/api/compute/jobs` polling loop in `remote_worker.py`. 
 - [x] 7 outbox tests (durability, concurrent record, ack semantics, gc, ordering)
 
 ### 2.3 RFC 8628 device authorization grant
-- [ ] `POST /api/auth/device/code` → returns `device_code, user_code, verification_uri, interval, expires_in`
-- [ ] `POST /api/auth/device/token` → polled by client; returns `{access_token, refresh_token}` once user approves
-- [ ] Browser flow at `/connect-device` showing `user_code` + Approve button (gated by login)
-- [ ] CLI: `kanad-compute login` opens browser, polls `/token`, persists tokens to OS keyring
-- [ ] Migrate WS auth from raw `User.kanad_compute_key` to short-lived JWT access_token + refresh
-- [ ] Revocation: dashboard page listing connected devices with "revoke" button
+- [x] `POST /api/auth/device/code` (cloud, unauth): mints `(device_code, user_code)` with 8-char dashed user_code from a vowel-free alphabet. Returns `verification_uri`, `verification_uri_complete?code=…`, `interval`, `expires_in=900s`. Opportunistic GC sweeps expired PENDING rows on every mint.
+- [x] `POST /api/auth/device/token` (cloud, unauth): standard RFC 8628 polling endpoint with error states `authorization_pending`, `slow_down`, `expired_token`, `access_denied`, `invalid_grant`. On APPROVED, mints a 30-day JWT and flips row to REDEEMED so it can't be re-used.
+- [x] `POST /api/auth/device/approve` (cloud, auth): user types `user_code` at `/connect-device?code=…`; this flips the row to APPROVED and binds the device to the calling user's id. Idempotent for the same user.
+- [x] Browser flow at `/connect-device` (Next.js, `web/src/app/connect-device/page.tsx`): reads `?code=` from the URL, prompts the signed-in user to confirm, calls `/api/auth/device/approve` with the user's existing session token. Shows success state with `client_id`.
+- [x] CLI: `kanad-compute login [--no-browser] [--timeout SECS]` mints a code, prints it + URL, opens the browser, polls `/api/auth/device/token` honouring the `interval` (and bumps on `slow_down`). On success, stores the access token in `Vault` under canonical key `kanad_access_token`.
+- [x] WS auth: `compute_ws.py::_authenticate` now decodes a JWT first; falls back to the legacy `User.kanad_compute_key` so older nodes don't break. `ws_client.py` prefers the vaulted `kanad_access_token` over the config `api_key` on connect.
+- [ ] **Refresh tokens.** Not minted yet — the 30-day window covers the migration period; rotation lands when we shorten access tokens to ~24h.
+- [ ] **Revocation UI.** A `/dashboard/devices` page listing approved sessions with a "revoke" button. Deferred until first multi-device user; today a server-side `UPDATE device_codes SET status='denied' WHERE …` does the job.
 
 ### 2.4 Local credential vault
 - [x] `kanad_compute/vault.py` wraps `keyring` (OS keychain on macOS / Credential Manager on Windows / Secret Service on Linux). API: `set/get/has/clear/status/all/list_present`
@@ -217,27 +219,27 @@ Once Rust compute is the default and stable:
 
 ## 7. Immediate next actions
 
-Phase 1 + Phase 2.1a / 2.1b-scaffolding / 2.2 / 2.4 / 2.5 / §6.1 / §6.4 are **code-complete and test-covered**.
+Phase 1 + **all** of Phase 2 (2.1a / 2.1b / 2.2 / 2.3 / 2.4 except headless-Linux fallback / 2.5) + §6.1 / §6.4 are **code-complete and test-covered**.
 
 Open PRs (stacked on existing branches, not yet merged):
-- `deeprealm-labs/kanad-compute#2` — `ws gateway phase 2.1 + 2.2 + 2.4 — progress, outbox, vault` (41 tests green)
-- `mk0dz/kanad-app#18` — `ws gateway phase 2.1 + 2.5 — progress, cancel, status` (16 tests green)
+- `deeprealm-labs/kanad-compute#2` — Phase 2.1 + 2.2 + 2.4 + 2.3-CLI (login command + vault token + WS prefers JWT)
+- `mk0dz/kanad-app#18` — Phase 2.1 + 2.5 + 2.3-server (device-auth routes + /connect-device page + WS JWT auth)
+- `deeprealm-labs/kanad#2` — Phase 2.1b: `callback` kwarg added to PhysicsVQE / HardwareVQE / VarQITE / qEOM / EfficientVQE in kanad-core.
 
 Phase 1 PRs already merged:
 - `kanad-compute`: `add ws gateway client` → `harden ws client outbox` → `add ws client tests`
 - `kanad-app`: `add ws gateway endpoint` → `add job transition helper` → `harden compute ws endpoint` → `wire dispatch hook` → `add ws gateway tests`
 
-Tests (current): 41 (compute) + 16 (app) = **57 passing**.
+Tests (current): 47 (compute) + 32 (app) = **79 passing**.
 
-Remaining before declaring Phase 1 + 2.1a done:
-1. **Manual e2e** against a real Postgres + real molecule per `kanad-app/docs/compute_ws_smoke.md` — including the new §"Verify live progress" section. Not yet run by any session.
-2. Merge `#2` and `#18` once the manual smoke passes.
+Remaining before declaring Phase 2 done:
+1. **Manual e2e** against a real Postgres + real molecule per `kanad-app/docs/compute_ws_smoke.md` — golden path (VQE/SQD progress + cancel + reconnect) AND the new device-auth login flow (`kanad-compute login` → browser approval → JWT in vault → WS connects with JWT bearer). Not yet run by any session.
+2. Merge the three open PRs once the manual smoke passes.
 
-Phase 2 remaining slices (in priority order):
-1. **kanad-core PR for 2.1b** — add `callback` kwarg to PhysicsVQE / HardwareVQE / VarQITE / qEOM / EfficientVQE. Compute-side adapter scaffolding (`_adapt_generic_progress`) is already in place; it starts producing Progress events automatically once the kwargs land. Touches a third repo.
-2. **Phase 2.3** — RFC 8628 device auth (cloud `/api/auth/device/code` + `/token`, browser `/connect-device`, CLI `kanad-compute login`).
-3. **§5.1 protocol-fuzz round-trip test** — cheap to add, catches silent schema drift between repos.
-4. **Encrypted file vault fallback** (Phase 2.4 tail) — only needed for headless Linux; punted until a real user hits it.
+Phase 2 deferred items (not blocking Phase 3 kickoff):
+- **Refresh-token rotation** — 30-day access tokens cover the migration period; revisit if/when we shorten the window.
+- **`/dashboard/devices` revocation UI** — defer until first multi-device user. Today: `UPDATE device_codes SET status='denied' WHERE user_code='…'` does the job.
+- **Encrypted file vault fallback** (2.4 tail) — only needed for headless Linux; punted until a real user hits it.
 
 §6 status:
 - §6.1 (multi-node) — **decided**: bump previous session, structured log.

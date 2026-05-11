@@ -125,7 +125,22 @@ class ComputeWSClient:
     def __init__(self, kanad_url: str, config: dict):
         self.kanad_url = kanad_url.rstrip("/")
         self.config = config
-        self.api_key = config.get("api_key", "")
+        # Prefer the device-auth JWT (Phase 2.3) from the vault, fall back to
+        # the legacy ``kanad_compute_key`` in config. Server's ``_authenticate``
+        # accepts either, so this is a transparent migration.
+        device_token = ""
+        try:
+            from .vault import Vault
+            device_token = Vault().get("kanad_access_token") or ""
+        except Exception:
+            pass
+        # Config override beats vault if the user explicitly sets a token in
+        # config; otherwise vault wins when present, else the legacy api_key.
+        self.api_key = (
+            config.get("kanad_access_token")
+            or device_token
+            or config.get("api_key", "")
+        )
         self.node_id = config.get("node_id", "unknown")
         self.gpu_enabled = bool(config.get("gpu_enabled", False))
 
