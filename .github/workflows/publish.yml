@@ -1,5 +1,8 @@
 name: Build & Publish to PyPI
 
+# Triggers PyPI release on tag push (v*).
+# Source of framework: deeprealm-labs/kanad@main (same org now, no cross-account token).
+
 on:
   push:
     tags:
@@ -15,12 +18,18 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Clone kanad framework
+        uses: actions/checkout@v4
+        with:
+          repository: deeprealm-labs/kanad
+          ref: main
+          path: kanad-framework
+
+      - name: Verify framework checkout
         run: |
-          git clone --depth 1 --branch live-minimal \
-            https://x-access-token:${{ secrets.KANAD_REPO_TOKEN }}@github.com/mk0dz/kanad-app.git \
-            kanad-app
-          echo "Cloned kanad-app, kanad/ contents:"
-          ls kanad-app/kanad/__init__.py && echo "OK"
+          test -f kanad-framework/__init__.py || \
+            (echo "ERROR: kanad-framework/__init__.py missing"; exit 1)
+          echo "Framework checked out OK"
+          ls kanad-framework/ | head -10
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -34,7 +43,7 @@ jobs:
 
       - name: Bundle kanad framework
         run: |
-          bash scripts/bundle_kanad.sh kanad-app/kanad
+          bash scripts/bundle_kanad.sh kanad-framework
           echo "Bundled $(find kanad_compute/kanad -name '*.py' | wc -l) kanad modules"
 
       - name: Build package
