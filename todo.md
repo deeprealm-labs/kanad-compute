@@ -97,12 +97,8 @@ Goal: kill the 2-second `/api/compute/jobs` polling loop in `remote_worker.py`. 
 
 ### 2.1b Solver callback hooks — remaining solvers (kanad-core PR)
 - [x] Adapter scaffolding in `kanad_compute/worker.py`: `_adapt_generic_progress` + `progress_cb` plumbed through every `_run_*` helper. Today these no-op (TypeError swallowed by `_solve_with_optional_callback`); they start producing Progress events automatically once kanad-core lands the kwarg
-- [ ] kanad-core PR: add `callback` kwarg to PhysicsVQE.solve()
-- [ ] kanad-core PR: add `callback` kwarg to HardwareVQE.solve_local() / solve_hardware() (positional `callback=cb` already attempted with TypeError fallback)
-- [ ] kanad-core PR: add `callback` kwarg to VarQITESolver.solve() (per-step or every-N-steps)
-- [ ] kanad-core PR: add `callback` kwarg to qEOMVQE.solve() (delegate to underlying VQE)
-- [ ] kanad-core PR: expose internal callback as user-configurable param on EfficientVQE.solve()
-- [ ] Tier requirement: kanad-core ≥ X.Y to unlock per-iteration progress for these solvers
+- [x] kanad-core PR (`deeprealm-labs/kanad#2`, branch `solver-callbacks-phase2-1b`): adds `callback` kwarg to PhysicsVQE.solve, HardwareVQE.solve_local/solve_hardware, VarQITESolver.solve, qEOMVQE.solve, EfficientVQE.solve. Signature: `callback(iteration, energy[, message])`. Exceptions inside the callback are swallowed at each call site so a buggy consumer can't break optimization.
+- [ ] Tier requirement: kanad-core ≥ X.Y once `#2` is merged. Compute-side `_solve_with_optional_callback` keeps the TypeError fallback so a node running an older kanad-core still works (no Progress, but no breakage).
 
 ### 2.2 SQLite outbox (crash-resilient delivery)
 - [x] `kanad_compute/outbox.py` — `Outbox(path)` with WAL journaling, threading lock, `record / ack / pending / pending_count / gc / close`
@@ -128,7 +124,7 @@ Goal: kill the 2-second `/api/compute/jobs` polling loop in `remote_worker.py`. 
 - [x] Worker prefers vaulted credentials over wire-provided ones during dispatch; cloud can stop sending creds once all users have populated vaults
 - [x] 8 vault tests with an in-memory keyring backend
 - [ ] Encrypted file fallback when no keyring backend exists: AES-256-GCM, Argon2id-derived key (deferred — `keyring` already covers macOS / Windows / mainstream Linux desktop; headless Linux is a separate UX problem)
-- [ ] Cloud-side enforcement: if `ExperimentRequest.backend in {"ibm", "ionq"}` and `Hello.vault[backend]` is False, fail-fast with a clear error before dispatching
+- [x] Cloud-side enforcement: `_try_ws_dispatch` runs a pre-flight credential check via `_check_credentials_available` keyed on solver type. When the requested solver needs cloud creds (today: `hardware_vqe` → IBM) and neither the node's vault nor the User row / .env has them, the dispatch refuses, marks the Job `FAILED` with a user-readable `error_message`, and skips the polling fallback. Mapping in `_SOLVER_VAULT_REQUIREMENTS` is the extension point for ionq/bluequbit once those solvers land in the WS path.
 
 ### 2.5 Cancellation
 - [x] Cooperative interrupt on compute side: `cancel_check` callable threaded through `worker.run_calculation`, checked between major phases (Phase 1)
@@ -181,7 +177,7 @@ Once Rust compute is the default and stable:
 ## 5. Cross-cutting / not-tied-to-a-phase
 
 ### 5.1 Testing
-- [ ] Protocol round-trip tests on both sides — random `ExperimentEvent` fuzzing through `model_dump_json` → `parse_*_message`
+- [x] Protocol round-trip fuzz tests on both sides (`tests/test_protocol_fuzz.py`): identical `_FUZZ_SEED=0xCAFEBABE`, 200 iterations across all five kinds. If a payload field is renamed on one side, both tests fail in lock-step.
 - [ ] Compute integration test: in-process FastAPI app + `ComputeWSClient` connecting to it; submit a fake `ExperimentRequest`; assert browser-fanout payload arrives at a mock `connection_manager`
 - [ ] Reconnect + replay test: kill the server mid-experiment, assert events redelivered
 - [ ] Backpressure test: slow the server reader, assert outbox grows, no events lost
@@ -221,13 +217,30 @@ Once Rust compute is the default and stable:
 
 ## 7. Immediate next actions
 
-Phase 1 (issue #16, WS gateway) is **code-complete and test-covered**. Three PRs landed across both repos:
+Phase 1 + Phase 2.1a / 2.1b-scaffolding / 2.2 / 2.4 / 2.5 / §6.1 / §6.4 are **code-complete and test-covered**.
+
+Open PRs (stacked on existing branches, not yet merged):
+- `deeprealm-labs/kanad-compute#2` — `ws gateway phase 2.1 + 2.2 + 2.4 — progress, outbox, vault` (41 tests green)
+- `mk0dz/kanad-app#18` — `ws gateway phase 2.1 + 2.5 — progress, cancel, status` (16 tests green)
+
+Phase 1 PRs already merged:
 - `kanad-compute`: `add ws gateway client` → `harden ws client outbox` → `add ws client tests`
 - `kanad-app`: `add ws gateway endpoint` → `add job transition helper` → `harden compute ws endpoint` → `wire dispatch hook` → `add ws gateway tests`
 
-Tests: 22 (compute) + 14 (app) = **36 passing**. Includes real-uvicorn WS smoke, dispatch round-trip, dedup-on-reconnect, cancel-race, and outbox/seq persistence.
+Tests (current): 41 (compute) + 16 (app) = **57 passing**.
 
-Remaining before declaring Phase 1 done:
-1. Manual e2e against a real Postgres + real molecule per `kanad-app/docs/compute_ws_smoke.md`
-2. File the Phase-2 epic on `mk0dz/kanad-app` so issue #16 has trackable children for live `Progress`, SQLite outbox, RFC 8628 device auth, local vault
-3. Decide §6 open questions (multi-node-per-user, Path A vs B, log source for TUI, solver versioning) before starting Phase 2 work
+Remaining before declaring Phase 1 + 2.1a done:
+1. **Manual e2e** against a real Postgres + real molecule per `kanad-app/docs/compute_ws_smoke.md` — including the new §"Verify live progress" section. Not yet run by any session.
+2. Merge `#2` and `#18` once the manual smoke passes.
+
+Phase 2 remaining slices (in priority order):
+1. **kanad-core PR for 2.1b** — add `callback` kwarg to PhysicsVQE / HardwareVQE / VarQITE / qEOM / EfficientVQE. Compute-side adapter scaffolding (`_adapt_generic_progress`) is already in place; it starts producing Progress events automatically once the kwargs land. Touches a third repo.
+2. **Phase 2.3** — RFC 8628 device auth (cloud `/api/auth/device/code` + `/token`, browser `/connect-device`, CLI `kanad-compute login`).
+3. **§5.1 protocol-fuzz round-trip test** — cheap to add, catches silent schema drift between repos.
+4. **Encrypted file vault fallback** (Phase 2.4 tail) — only needed for headless Linux; punted until a real user hits it.
+
+§6 status:
+- §6.1 (multi-node) — **decided**: bump previous session, structured log.
+- §6.4 (solver versioning) — **decided**: advertise `kanad_core_version`; no server refusal yet.
+- §6.2 Path A vs B — still `[!]`, decide before Phase 3.
+- §6.3 TUI log source — still `[!]`, decide before 3.4.
