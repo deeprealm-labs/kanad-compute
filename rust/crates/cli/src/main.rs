@@ -5,6 +5,8 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use kanad_auth::DeviceFlow;
+use kanad_gateway::client::unimplemented_factory;
+use kanad_gateway::{ClientConfig, GatewayClient};
 use kanad_vault::{Vault, CANONICAL_KEYS};
 use std::io::{self, Write};
 use tracing_subscriber::EnvFilter;
@@ -37,6 +39,12 @@ enum Cmd {
         #[arg(long, default_value_t = 900)]
         timeout: u64,
     },
+    /// Open the persistent WebSocket gateway and serve experiments.
+    Connect {
+        /// Override the node id reported in Hello.
+        #[arg(long, env = "KANAD_NODE_ID")]
+        node_id: Option<String>,
+    },
     /// Print version + build info.
     Version,
 }
@@ -68,6 +76,7 @@ async fn main() -> Result<()> {
         Cmd::Status => cmd_status().await,
         Cmd::Creds { action } => cmd_creds(action).await,
         Cmd::Login { no_browser, timeout } => cmd_login(&cli.url, no_browser, timeout).await,
+        Cmd::Connect { node_id } => cmd_connect(&cli.url, node_id).await,
         Cmd::Version => {
             println!("kanad-compute {}", env!("CARGO_PKG_VERSION"));
             Ok(())
@@ -159,6 +168,33 @@ async fn cmd_login(base_url: &str, no_browser: bool, timeout: u64) -> Result<()>
         .context("vault set kanad_access_token failed")?;
     println!("Login successful — token stored in vault.");
     Ok(())
+}
+
+async fn cmd_connect(base_url: &str, node_id_override: Option<String>) -> Result<()> {
+    let v = Vault::new();
+    let token = v
+        .get("kanad_access_token")
+        .ok_or_else(|| anyhow::anyhow!(
+            "no access token in vault. Run `kanad-compute login` first."
+        ))?;
+    let node_id = node_id_override
+        .or_else(|| std::env::var("KANAD_NODE_ID").ok())
+        .unwrap_or_else(default_node_id);
+
+    let cfg = ClientConfig::new(base_url, token, node_id);
+    let client = GatewayClient::new(cfg, unimplemented_factory())
+        .context("initialize gateway client")?;
+
+    tracing::info!(url = %client.config.ws_url(), node_id = %client.config.node_id,
+        "kanad-compute connect: starting gateway");
+    client.run_forever().await
+}
+
+fn default_node_id() -> String {
+    hostname::get()
+        .ok()
+        .and_then(|h| h.into_string().ok())
+        .unwrap_or_else(|| "unknown-node".into())
 }
 
 fn open_browser(url: &str) -> std::io::Result<()> {

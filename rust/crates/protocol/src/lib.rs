@@ -329,8 +329,11 @@ pub struct ExperimentEvent {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawExperimentEvent {
-    #[serde(rename = "type")]
-    type_: String,
+    // `type` is omitted when this struct is deserialized inside a
+    // `tag = "type"` enum (the tag has already been consumed). Keep it
+    // optional so both wrapped and standalone JSON parse cleanly.
+    #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
+    type_: Option<String>,
     experiment_id: String,
     seq: i64,
     ts_ms: i64,
@@ -340,8 +343,13 @@ struct RawExperimentEvent {
 
 impl Serialize for ExperimentEvent {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        // Emit the `type` field for standalone serialization. The
+        // `ClientMessage` wrapper strips and rewrites it via its
+        // `tag = "type"` adjacent encoding, so this is harmless when
+        // wrapped: the wrapper writes the tag first, then the inner
+        // fields with `type` already removed.
         let raw = RawExperimentEvent {
-            type_: "ExperimentEvent".into(),
+            type_: Some("ExperimentEvent".into()),
             experiment_id: self.experiment_id.clone(),
             seq: self.seq,
             ts_ms: self.ts_ms,
@@ -355,11 +363,12 @@ impl Serialize for ExperimentEvent {
 impl<'de> Deserialize<'de> for ExperimentEvent {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let raw = RawExperimentEvent::deserialize(d)?;
-        if raw.type_ != "ExperimentEvent" {
-            return Err(serde::de::Error::custom(format!(
-                "expected type=ExperimentEvent, got {}",
-                raw.type_
-            )));
+        if let Some(ref t) = raw.type_ {
+            if t != "ExperimentEvent" {
+                return Err(serde::de::Error::custom(format!(
+                    "expected type=ExperimentEvent, got {t}"
+                )));
+            }
         }
         let payload = EventPayload::from_kind_and_value(&raw.kind, raw.payload)
             .map_err(serde::de::Error::custom)?;

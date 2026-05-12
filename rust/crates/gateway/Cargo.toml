@@ -9,10 +9,11 @@ description = "Outbound WebSocket gateway client for kanad-compute."
 
 [dependencies]
 kanad-protocol.workspace = true
+kanad-runtime.workspace = true
 tokio.workspace = true
 tokio-tungstenite.workspace = true
 futures-util.workspace = true
-reqwest = { workspace = true, optional = true }
+http = "1.1"
 serde.workspace = true
 serde_json.workspace = true
 url.workspace = true
