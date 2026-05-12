@@ -1,0 +1,24 @@
+[package]
+name = "kanad-compute-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "kanad-compute command-line entry point."
+
+[[bin]]
+name = "kanad-compute"
+path = "src/main.rs"
+
+[dependencies]
+kanad-auth.workspace = true
+kanad-protocol.workspace = true
+kanad-vault.workspace = true
+kanad-gateway.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde_json.workspace = true

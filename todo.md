@@ -138,16 +138,19 @@ Goal: kill the 2-second `/api/compute/jobs` polling loop in `remote_worker.py`. 
 ## 3. Phase 3 — Rust runtime (the actual rewrite)
 
 ### 3.1 Workspace bootstrap
-- [ ] `kanad-compute` crate workspace: `vault/`, `auth/`, `protocol/`, `gateway/`, `runtime/`, `cli/`, `tui/`
-- [ ] Build: `cargo workspace`, MSRV 1.75
-- [ ] CI: `cargo test`, `cargo clippy -- -D warnings`, cross-compile macOS (arm64, x86_64), Linux (x86_64, aarch64), Windows (x86_64)
+- [x] `kanad-compute` Cargo workspace under `rust/` with seven crates: `protocol`, `vault`, `auth`, `gateway`, `runtime`, `cli`, `tui`
+- [x] Build: `cargo check --workspace` clean; MSRV bumped to 1.85 (clap 4.6 + edition2024 floor — 1.75 in the original plan was no longer reachable from current crates.io)
+- [x] `cargo test --workspace` — 24 tests passing (7 protocol + 6 vault + 3 auth + 8 gateway)
+- [x] `cargo clippy --workspace --all-targets -- -D warnings` — clean
+- [ ] CI: GitHub Actions workflow running the above on each push, plus cross-compile matrix for macOS arm64/x86_64, Linux x86_64/aarch64, Windows x86_64 (deferred to 3.2)
 
 ### 3.2 Native crates first (no solver math yet)
-- [ ] `vault` — keyring + AES-GCM file fallback. Public API: `set/get/rotate/clear`.
-- [ ] `auth` — RFC 8628 client; token refresh; revocation hook.
-- [ ] `protocol` — Serde structs mirroring `kanad-compute/kanad_compute/protocol.py`. JSON for v1, optional Protobuf feature flag.
-- [ ] `gateway` — async WS client (`tokio-tungstenite`); reconnect; outbox (`rusqlite`); same backoff as Python client.
-- [ ] `cli` — replace Click commands one at a time: `connect`, `login`, `creds`, `status`.
+- [x] `protocol` — Serde mirror of `kanad_compute/protocol.py`. Tagged-enum `ServerMessage` / `ClientMessage`, `deny_unknown_fields` on every struct, custom (de)serialize for `ExperimentEvent` so `kind` + `payload` stay synchronized by construction. Round-trip + reject-unknown-field tests cover Hello, ExperimentEvent (Progress), ExperimentRequest, and Ack.
+- [x] `vault` — keyring wrapper with canonical-key allowlist (`ibm_api_token`, `ibm_crn`, `ionq_api_key`, `bluequbit_api_key`, `kanad_access_token`). Backend trait + `MemoryBackend` for tests. Headless-Linux AES-GCM file fallback still deferred (Phase 2 tail item).
+- [x] `auth` — RFC 8628 client: `DeviceFlow::request_code` + `poll_token` loop honouring `authorization_pending` / `slow_down` (+5 s) / `access_denied` / `expired_token` / `invalid_grant`. Returns `AccessToken { access_token, expires_in, ... }`. Refresh-token rotation still deferred (same as the Python side).
+- [x] `gateway` — Phase 3.1 ships the foundation only: durable `Outbox` (`rusqlite`, WAL, `synchronous=NORMAL`) that mirrors the Python schema byte-for-byte (`events(id, experiment_id, seq, kind, payload_json, created_at)`) and a `Backoff` (1 s → 30 s exponential, ±20 % jitter). The async WS send/recv loop wires up in 3.2.
+- [x] `cli` — `kanad-compute` binary with subcommands `status`, `creds {set,get,list,clear}`, `login [--no-browser] [--timeout SECS]`, `version`. `connect` lands once the gateway WS loop is in.
+- [ ] `gateway` WS send/recv loop (`tokio-tungstenite`): Hello/Registered handshake, ping/pong, `_emit` records-then-sends, Ack-driven outbox trim, reconnect via `Backoff`.
 
 ### 3.3 Solver migration (Tier 1 → Tier 2)
 - [ ] Build the statevector simulator natively (faer / ndarray + LAPACK)
