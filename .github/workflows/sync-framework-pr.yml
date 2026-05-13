@@ -35,12 +35,13 @@ jobs:
           MSG=$(echo "${{ github.event.client_payload.commit_message }}" | head -1)
           echo "msg=$MSG" >> $GITHUB_OUTPUT
 
-      - name: Clone kanad framework at SHA
+      - name: Clone kanad framework at SHA (private repo — needs PAT)
         uses: actions/checkout@v4
         with:
           repository: deeprealm-labs/kanad
           ref: ${{ steps.ref.outputs.sha }}
           path: kanad-framework
+          token: ${{ secrets.KANAD_DISPATCH_PAT }}
 
       - name: Bundle framework into kanad_compute/kanad
         run: |

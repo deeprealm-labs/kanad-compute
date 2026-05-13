@@ -17,12 +17,13 @@ jobs:
       - name: Checkout kanad-compute
         uses: actions/checkout@v4
 
-      - name: Clone kanad framework
+      - name: Clone kanad framework (private repo — needs PAT)
         uses: actions/checkout@v4
         with:
           repository: deeprealm-labs/kanad
           ref: main
           path: kanad-framework
+          token: ${{ secrets.KANAD_DISPATCH_PAT }}
 
       - name: Verify framework checkout
         run: |
