@@ -226,6 +226,44 @@ def status():
 
 
 @main.command()
+@click.option("--url", default=None, help="Kanad URL (default: configured kanad_url)")
+def connect(url):
+    """Connect to Kanad over WebSocket (replaces polling worker)."""
+    from .config import load_config, save_config, CONFIG_FILE
+
+    if not CONFIG_FILE.exists():
+        console.print("[red]Not initialized. Run [bold]kanad-compute init[/bold] first.[/red]")
+        raise SystemExit(1)
+
+    cfg = load_config()
+    kanad_url = url or cfg.get("kanad_url") or cfg.get("kanad_api_url")
+    if not kanad_url:
+        console.print("[red]No Kanad URL set. Use --url or run [bold]kanad-compute start --connect URL[/bold] first.[/red]")
+        raise SystemExit(1)
+
+    cfg["kanad_url"] = kanad_url.rstrip("/")
+    save_config(cfg)
+
+    console.print(BANNER)
+    console.print()
+    console.print(Panel(
+        f"[bold]Connecting to Kanad over WebSocket[/bold]\n\n"
+        f"  [cyan]{kanad_url}[/cyan]\n\n"
+        f"[dim]Persistent outbound connection. Jobs are pushed live; results stream back.[/dim]",
+        title="[bold green]WS Mode[/bold green]",
+        border_style="green",
+    ))
+    console.print(f"\n  Press [bold]Ctrl+C[/bold] to disconnect.\n")
+
+    from .ws_client import ComputeWSClient
+    client = ComputeWSClient(kanad_url, cfg)
+    try:
+        client.run_forever_sync()
+    except KeyboardInterrupt:
+        console.print("\n[dim]Disconnected.[/dim]")
+
+
+@main.command()
 def key():
     """Display the API key (for pasting into Kanad app)."""
     from .config import load_config, CONFIG_FILE

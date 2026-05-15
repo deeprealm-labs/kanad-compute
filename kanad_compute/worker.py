@@ -3,9 +3,42 @@
 import logging
 import time
 import traceback
-from typing import Any, Optional
+from typing import Any, Callable, Optional, TypedDict
 
 logger = logging.getLogger(__name__)
+
+
+class JobRecord(TypedDict, total=False):
+    """Typed shape of the dict consumed by run_calculation.
+
+    Fields are nominally optional because callers historically built this dict
+    with `.get()`-style fallbacks. The WS client (``ws_client.py``) populates
+    every field it has from the typed wire ``ExperimentRequest``.
+    """
+    job_id: str
+    atoms: list[dict]
+    basis: str
+    charge: int
+    multiplicity: int
+    solver: str
+    backend: str
+    max_iterations: int
+    max_excitations: int
+    ansatz_type: str
+    optimizer: Optional[str]
+    mapper_type: Optional[str]
+    ibm_api_token: Optional[str]
+    ibm_crn: Optional[str]
+    ionq_api_key: Optional[str]
+
+
+class CancelledError(RuntimeError):
+    """Raised when ``cancel_check`` returns True between solver phases."""
+
+
+def _check(cancel_check: Optional[Callable[[], bool]]) -> None:
+    if cancel_check is not None and cancel_check():
+        raise CancelledError("cancelled by user")
 
 
 def _build_bond(atoms: list[dict], basis: str = "sto-3g", charge: int = 0):
@@ -40,11 +73,16 @@ def _build_pyscf_mol(atoms: list[dict], basis: str = "sto-3g", charge: int = 0):
     return gto.M(atom=atom_str, basis=basis, charge=charge, verbose=0)
 
 
-def run_calculation(job: dict, gpu_enabled: bool = False) -> dict:
+def run_calculation(
+    job: dict,
+    gpu_enabled: bool = False,
+    *,
+    cancel_check: Optional[Callable[[], bool]] = None,
+) -> dict:
     """
     Run a Kanad calculation job. Returns result dict.
 
-    job schema:
+    job schema (see ``JobRecord``):
         atoms: [{symbol, position: [x,y,z]}, ...]
         basis: str
         charge: int
@@ -56,6 +94,11 @@ def run_calculation(job: dict, gpu_enabled: bool = False) -> dict:
         ibm_api_token: str | None
         ibm_crn: str | None
         ionq_api_key: str | None
+
+    cancel_check: optional zero-arg callable returning True if the caller wants
+        the run aborted. Currently checked between major phases (build, solve,
+        finalize); per-iteration cooperation lands in Phase 2 with the solver
+        callback hooks.
     """
     t0 = time.time()
     result: dict[str, Any] = {
@@ -81,6 +124,7 @@ def run_calculation(job: dict, gpu_enabled: bool = False) -> dict:
         ansatz_type = job.get("ansatz_type", "hardware_efficient")
 
         logger.info(f"Running {solver_type} on {len(atoms)} atoms, backend={backend_type}")
+        _check(cancel_check)
 
         # --- Select backend ---
         backend = "statevector"
@@ -98,6 +142,7 @@ def run_calculation(job: dict, gpu_enabled: bool = False) -> dict:
                 backend = "aer"
 
         # --- Run solver ---
+        _check(cancel_check)
         if solver_type in ("physics_vqe", "smart"):
             sol_result = _run_physics_vqe(
                 atoms, basis, charge, backend,
@@ -145,6 +190,10 @@ def run_calculation(job: dict, gpu_enabled: bool = False) -> dict:
             result["error_mha"] = abs(result["energy"] - result["fci_energy"]) * 1000
         result["status"] = "completed"
 
+    except CancelledError as e:
+        logger.info(f"Calculation cancelled: {e}")
+        result["status"] = "cancelled"
+        result["error_message"] = str(e)
     except Exception as e:
         logger.error(f"Calculation failed: {e}")
         result["status"] = "failed"
