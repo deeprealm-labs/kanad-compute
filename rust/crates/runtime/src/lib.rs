@@ -7,6 +7,9 @@
 
 pub mod statevector;
 pub mod pauli;
+pub mod ansatz;
+pub mod optim;
+pub mod vqe;
 
 use kanad_protocol::{ExperimentRequest, FinalResultPayload, ProgressPayload};
 use thiserror::Error;

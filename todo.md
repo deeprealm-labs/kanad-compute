@@ -154,7 +154,7 @@ Goal: kill the 2-second `/api/compute/jobs` polling loop in `remote_worker.py`. 
 
 ### 3.3 Solver migration (Tier 1 → Tier 2)
 - [x] Build the statevector simulator natively. `runtime/statevector.rs` implements a dense `StateVector<Complex64>` with single-qubit gates (I/X/Y/Z/H/S/T/RX/RY/RZ/phase), controlled-1q gates (CNOT/CZ), SWAP, in-place stride-based application, and a compact `Op` enum so ansätze can hand the simulator a `Vec<Op>`. `runtime/pauli.rs` adds `PauliString` / `PauliSum` with Hermitian expectation values computed in O(N) per term (no matrix materialization), Qiskit-convention `from_label` parser, and Bell/H2-minimal sanity tests. 15 unit tests passing.
-- [ ] Port basic VQE (parameter-shift gradients, COBYLA / L-BFGS via `argmin`)
+- [~] Port basic VQE. `runtime/ansatz.rs` ships a hardware-efficient ansatz (RY+RZ per qubit, linear CNOT entangler, configurable layer count). `runtime/optim.rs` ships a self-contained Nelder-Mead minimizer (Rosenbrock-tested). `runtime/vqe.rs` glues them into a `vqe(hamiltonian, ansatz, cfg, &mut cb)` entry point with a per-evaluation callback (cancel + progress bridge). Test against the 2-qubit H2 Hamiltonian (O'Malley 2016 coefficients) reaches E < -1.84 Ha, beating HF. Still open: parameter-shift gradients + L-BFGS via `argmin`; for a 2-qubit toy NM is fine but it won't scale to PhysicsVQE / HardwareVQE param counts.
 - [ ] Port PhysicsVQE governance layer
 - [ ] Port HardwareVQE (transpilation pipeline; backend abstraction)
 - [ ] Wrap remaining Python solvers via PyO3 shim (Tier 2): SQD, qEOM, advanced ansätze. Hide them behind the same `Solver` trait so callers don't care which tier handled the job.
