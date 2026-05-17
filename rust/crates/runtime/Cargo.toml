@@ -1,0 +1,18 @@
+[package]
+name = "kanad-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Native solver runtime for kanad-compute (Phase 3.3)."
+
+[dependencies]
+kanad-protocol.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+num-complex.workspace = true
+ndarray.workspace = true
+
+[dev-dependencies]
+approx = "0.5"

@@ -1,0 +1,17 @@
+[package]
+name = "kanad-compute-tui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Optional ratatui-based TUI for kanad-compute (Phase 3.4)."
+
+[[bin]]
+name = "kanad-compute-tui"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+ratatui.workspace = true
+crossterm.workspace = true

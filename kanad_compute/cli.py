@@ -226,6 +226,174 @@ def status():
 
 
 @main.command()
+@click.option("--url", default=None, help="Kanad URL (default: configured kanad_url)")
+@click.option("--no-browser", is_flag=True, help="Don't auto-open the browser; print the URL instead")
+@click.option("--timeout", default=900, type=int, help="Max seconds to wait for approval (default 15min)")
+def login(url, no_browser, timeout):
+    """Log in via RFC 8628 device authorization (browser-mediated).
+
+    Equivalent to ``gh auth login`` / ``claude login``: this command mints a
+    short device code from the configured Kanad app, opens the verification
+    URL in your browser, and polls until you approve. The resulting access
+    token is stored in your OS keychain (``Vault``) and used for the WS
+    connection in place of the legacy ``kanad_compute_key``.
+    """
+    import time as _time
+    import webbrowser
+    import urllib.error
+    import urllib.request
+
+    from .config import load_config, save_config, CONFIG_FILE
+    from .vault import Vault
+
+    if not CONFIG_FILE.exists():
+        console.print(
+            "[red]Not initialized. Run [bold]kanad-compute init[/bold] first.[/red]"
+        )
+        raise SystemExit(1)
+
+    cfg = load_config()
+    kanad_url = (url or cfg.get("kanad_url") or cfg.get("kanad_api_url") or "").rstrip("/")
+    if not kanad_url:
+        console.print("[red]No Kanad URL set. Pass --url or set kanad_url in config.[/red]")
+        raise SystemExit(1)
+
+    # Step 1 — issue device code.
+    import json as _json
+    req = urllib.request.Request(
+        f"{kanad_url}/api/auth/device/code",
+        method="POST",
+        headers={"Content-Type": "application/json"},
+        data=b"{}",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            code = _json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        console.print(f"[red]Failed to issue device code: HTTP {e.code}[/red]")
+        raise SystemExit(2)
+    except Exception as e:
+        console.print(f"[red]Failed to reach {kanad_url}: {e}[/red]")
+        raise SystemExit(2)
+
+    user_code = code["user_code"]
+    verification_uri = code["verification_uri"]
+    verification_uri_complete = code["verification_uri_complete"]
+    device_code = code["device_code"]
+    interval = max(1, int(code.get("interval", 5)))
+    expires_in = int(code.get("expires_in", 900))
+
+    console.print()
+    console.print(Panel(
+        f"[bold]Open this URL in your browser:[/bold]\n\n"
+        f"  [cyan]{verification_uri_complete}[/cyan]\n\n"
+        f"And confirm this code:\n\n"
+        f"  [bold yellow]{user_code}[/bold yellow]\n\n"
+        f"[dim]Waiting for approval (timeout {min(timeout, expires_in)}s)…[/dim]",
+        title="[bold green]Device login[/bold green]",
+        border_style="green",
+    ))
+
+    if not no_browser:
+        try:
+            webbrowser.open(verification_uri_complete)
+        except Exception:
+            pass  # already printed the URL above
+
+    # Step 2 — poll.
+    deadline = _time.monotonic() + min(timeout, expires_in)
+    access_token: str = ""
+    while _time.monotonic() < deadline:
+        _time.sleep(interval)
+        body = _json.dumps({"device_code": device_code}).encode("utf-8")
+        try:
+            poll_req = urllib.request.Request(
+                f"{kanad_url}/api/auth/device/token",
+                method="POST",
+                headers={"Content-Type": "application/json"},
+                data=body,
+            )
+            with urllib.request.urlopen(poll_req, timeout=10) as r:
+                tok = _json.loads(r.read().decode("utf-8"))
+                access_token = tok["access_token"]
+                break
+        except urllib.error.HTTPError as e:
+            try:
+                err_body = _json.loads(e.read().decode("utf-8"))
+                err = err_body.get("detail", {}).get("error") if isinstance(err_body.get("detail"), dict) else None
+            except Exception:
+                err = None
+            if err == "authorization_pending":
+                continue
+            if err == "slow_down":
+                interval += 1
+                continue
+            if err in {"expired_token", "access_denied", "invalid_grant"}:
+                console.print(f"[red]Login failed: {err}[/red]")
+                raise SystemExit(3)
+            console.print(f"[red]Unexpected error during polling: HTTP {e.code}[/red]")
+            raise SystemExit(4)
+        except Exception as e:
+            console.print(f"[red]Poll failed: {e}[/red]")
+            raise SystemExit(4)
+    if not access_token:
+        console.print("[red]Timed out waiting for approval.[/red]")
+        raise SystemExit(3)
+
+    # Step 3 — persist in vault and config.
+    try:
+        Vault().set("kanad_access_token", access_token)
+    except Exception as e:
+        console.print(
+            f"[yellow]Warning: could not store token in OS keyring ({e}); "
+            f"falling back to config file (less secure).[/yellow]"
+        )
+        cfg["kanad_access_token"] = access_token
+    cfg["kanad_url"] = kanad_url
+    save_config(cfg)
+    console.print("[green]Logged in successfully.[/green]")
+    console.print(f"\n[dim]Now run [bold]kanad-compute connect[/bold] to start the gateway.[/dim]")
+
+
+@main.command()
+@click.option("--url", default=None, help="Kanad URL (default: configured kanad_url)")
+def connect(url):
+    """Connect to Kanad over WebSocket (replaces polling worker)."""
+    from .config import load_config, save_config, CONFIG_FILE
+
+    if not CONFIG_FILE.exists():
+        console.print("[red]Not initialized. Run [bold]kanad-compute init[/bold] first.[/red]")
+        raise SystemExit(1)
+
+    cfg = load_config()
+    kanad_url = url or cfg.get("kanad_url") or cfg.get("kanad_api_url")
+    if not kanad_url:
+        console.print("[red]No Kanad URL set. Use --url or run [bold]kanad-compute start --connect URL[/bold] first.[/red]")
+        raise SystemExit(1)
+
+    cfg["kanad_url"] = kanad_url.rstrip("/")
+    save_config(cfg)
+
+    console.print(BANNER)
+    console.print()
+    console.print(Panel(
+        f"[bold]Connecting to Kanad over WebSocket[/bold]\n\n"
+        f"  [cyan]{kanad_url}[/cyan]\n\n"
+        f"[dim]Persistent outbound connection. Jobs are pushed live; results stream back.[/dim]",
+        title="[bold green]WS Mode[/bold green]",
+        border_style="green",
+    ))
+    console.print(f"\n  Press [bold]Ctrl+C[/bold] to disconnect.\n")
+
+    from .ws_client import ComputeWSClient
+    client = ComputeWSClient(kanad_url, cfg)
+    try:
+        client.run_forever_sync()
+    except KeyboardInterrupt:
+        console.print("\n[dim]Disconnected.[/dim]")
+
+
+@main.command()
 def key():
     """Display the API key (for pasting into Kanad app)."""
     from .config import load_config, CONFIG_FILE
@@ -276,6 +444,71 @@ def configure(ibm_token, ionq_key, max_qubits, gpu, port):
         console.print(f"[green]Updated: {', '.join(changed)}[/green]")
     else:
         console.print("[dim]No changes. Use --help to see options.[/dim]")
+
+
+@main.group()
+def creds():
+    """Manage local credential vault (OS keyring)."""
+    pass
+
+
+_VAULT_CHOICES = ("ibm_api_token", "ibm_crn", "ionq_api_key", "bluequbit_api_key")
+
+
+@creds.command("set")
+@click.argument("key", type=click.Choice(_VAULT_CHOICES))
+@click.option("--value", default=None, help="Value (prompted if omitted)")
+def creds_set(key, value):
+    """Store a credential in the OS keyring."""
+    from .vault import Vault, VaultError
+    if value is None:
+        value = click.prompt(f"Enter value for {key}", hide_input=True, confirmation_prompt=False)
+    try:
+        Vault().set(key, value)
+        console.print(f"[green]✓ stored {key}[/green]")
+    except VaultError as e:
+        console.print(f"[red]vault error: {e}[/red]")
+        raise SystemExit(1)
+
+
+@creds.command("get")
+@click.argument("key", type=click.Choice(_VAULT_CHOICES))
+@click.option("--reveal", is_flag=True, help="Print the full secret (default: last 4 chars only)")
+def creds_get(key, reveal):
+    """Read a credential from the vault. Hidden by default."""
+    from .vault import Vault
+    val = Vault().get(key)
+    if val is None:
+        console.print(f"[yellow]{key}: not set[/yellow]")
+        return
+    if reveal:
+        console.print(val)
+    else:
+        console.print(f"{key}: ****{val[-4:] if len(val) >= 4 else '****'}")
+
+
+@creds.command("list")
+def creds_list():
+    """List which logical credentials are present."""
+    from .vault import Vault
+    status = Vault().status()
+    table = Table(box=box.SIMPLE)
+    table.add_column("backend", style="cyan")
+    table.add_column("present")
+    for backend, ok in status.items():
+        table.add_row(backend, "[green]yes[/green]" if ok else "[dim]no[/dim]")
+    console.print(table)
+
+
+@creds.command("clear")
+@click.argument("key", type=click.Choice(_VAULT_CHOICES))
+def creds_clear(key):
+    """Remove a credential from the vault."""
+    from .vault import Vault
+    if Vault().clear(key):
+        console.print(f"[green]✓ cleared {key}[/green]")
+    else:
+        console.print(f"[yellow]{key}: nothing to clear[/yellow]")
 
 
 if __name__ == "__main__":
