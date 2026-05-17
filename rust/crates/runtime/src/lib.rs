@@ -1,9 +1,12 @@
-//! Native solver runtime — Phase 3.3 will fill this in.
+//! Native solver runtime.
 //!
-//! For Phase 3.1 we expose only the `Solver` trait and `ProgressSink` so
-//! the gateway crate can be wired against the shape it will eventually
-//! call. The first real implementations (statevector, basic VQE) land in
-//! 3.3.
+//! Phase 3.3 in progress: ships the dense statevector simulator
+//! (`statevector`) and Pauli-sum Hamiltonians (`pauli`) that VQE will
+//! drive. The `Solver` trait + `ProgressSink` + `CancelToken` shape was
+//! locked in by Phase 3.2.
+
+pub mod statevector;
+pub mod pauli;
 
 use kanad_protocol::{ExperimentRequest, FinalResultPayload, ProgressPayload};
 use thiserror::Error;

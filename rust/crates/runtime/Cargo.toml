@@ -11,3 +11,8 @@ description = "Native solver runtime for kanad-compute (Phase 3.3)."
 kanad-protocol.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+num-complex.workspace = true
+ndarray.workspace = true
+
+[dev-dependencies]
+approx = "0.5"

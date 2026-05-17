@@ -153,7 +153,7 @@ Goal: kill the 2-second `/api/compute/jobs` polling loop in `remote_worker.py`. 
 - [x] `gateway` WS send/recv loop (`tokio-tungstenite`): Hello/Registered handshake (10s timeout, version-major check), reader/writer/ping tasks under a `JoinSet`, mpsc-fanned writer drains a single `WsSink`, `emit()` records-to-outbox-then-sends, Ack-driven outbox trim + `seq.json` persist, ping watchdog (15s tick, 2-miss disconnect via atomic `last_pong_at`), reconnect via `Backoff`. Solver execution plugs in through `kanad-runtime::Solver` + `ProgressSink` + `CancelToken`. Integration test (`crates/gateway/tests/ws_smoke.rs`) spins up an in-process tungstenite server and proves Hello → Registered → ExperimentRequest → Log + Error events → Ack → outbox trim end-to-end.
 
 ### 3.3 Solver migration (Tier 1 → Tier 2)
-- [ ] Build the statevector simulator natively (faer / ndarray + LAPACK)
+- [x] Build the statevector simulator natively. `runtime/statevector.rs` implements a dense `StateVector<Complex64>` with single-qubit gates (I/X/Y/Z/H/S/T/RX/RY/RZ/phase), controlled-1q gates (CNOT/CZ), SWAP, in-place stride-based application, and a compact `Op` enum so ansätze can hand the simulator a `Vec<Op>`. `runtime/pauli.rs` adds `PauliString` / `PauliSum` with Hermitian expectation values computed in O(N) per term (no matrix materialization), Qiskit-convention `from_label` parser, and Bell/H2-minimal sanity tests. 15 unit tests passing.
 - [ ] Port basic VQE (parameter-shift gradients, COBYLA / L-BFGS via `argmin`)
 - [ ] Port PhysicsVQE governance layer
 - [ ] Port HardwareVQE (transpilation pipeline; backend abstraction)
