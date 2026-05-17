@@ -1,4 +1,0 @@
-- Make the app look more like an institutional-grade and production-grade quantum computing software.
-- App mostly currently looks like it's a vibe coded but we need to make it professional, enterprise-grade ready
-- In the compute tab, when a job is running, it just says running, we should make it more interactive with live updates and visualizations.
-- Workflow needs to be upgraded. Applications like shrodinger, biovia, and various other premium paid software, but the - UI should be modern and filled with current technologies like agentic AIs and LLMs.
