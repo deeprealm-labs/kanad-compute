@@ -189,23 +189,25 @@ Once Rust compute is the default and stable:
 This phase is **kanad-app frontend** work and is independent of the Rust runtime, but §5.2 directly consumes the live `Progress` events the Rust gateway now emits (Phase 3.3 `VqeSolver` → `ProgressSink`).
 
 ### 5.1 Design-system consolidation (kill the ad-hoc styling)
-- [ ] Extract the `globals.css` CSS variables into a documented token layer (color / spacing / typography / elevation / motion). Single source of truth; no raw hex or px in component files.
-- [ ] Stand up a headless component primitive library (shadcn-style on Radix, themed to the existing tokens — keep sharp edges, muted palette): Button, Input, Select, Dialog, Tooltip, Tabs, Table, Card, Badge/StatusPill, Toast, Skeleton, EmptyState, Popover, Command palette (⌘K).
-- [ ] Replace **all** inline `style={{…}}` objects in `web/src/components/molecular/*` (start with `ExperimentMonitor.tsx:388–684`) with token-driven classes / primitives.
-- [ ] Replace emoji icons with a real icon set (Lucide) — `BackendSelector.tsx:40–70`, the `●◉○` timeline glyphs in `ExperimentMonitor.tsx:362–366`.
-- [ ] CSS-based hover/focus/active states with consistent transition timing; remove inline `onMouseEnter/onMouseLeave` style mutation (`ExperimentMonitor.tsx:667`, `app/page.tsx:137–141`).
-- [ ] Loading **skeletons**, **empty states**, and designed **error states** everywhere a spinner or bare string lives today.
+- [x] Token layer exists in `globals.css` (color / typography / status / shadow / quantum palette, light+dark via `data-theme`). Phase-5 commit added token-driven primitive classes: `.status-pill`, `.chip`, `.skeleton` (shimmer), `.metric`, `.icon-btn`, `.console`, `.timeline-*`, `.banner`, `.empty-state`. Formal spacing/elevation/motion scale + a docs page still open.
+- [~] Headless primitive library. First primitive landed: dependency-free `web/src/components/ui/Icon.tsx` (Lucide-style SVG set, `currentColor`). Still to build: Button, Input, Select, Dialog, Tooltip, Tabs, Table, Card, Toast, Popover, Command palette (⌘K). Decision pending: Radix + shadcn vs. continue bespoke.
+- [~] Replace inline `style={{…}}` in `web/src/components/molecular/*`. `ExperimentMonitor.tsx` fully reworked onto token classes (was ~56 inline objects + hardcoded dark hex that ignored the theme → now theme-aware). Remaining `molecular/*` components (ResultsDisplay, BackendSelector body, etc.) still carry inline styles.
+- [~] Emoji → icon set. Done: `ExperimentMonitor` timeline glyphs (`●◉○` → `Icon`), `BackendSelector` backend icons (💻⚛️🔵🔬🖥️ → monitor/atom/cloud/flask/cpu). Sweep the rest of the app next.
+- [x] CSS-based hover/focus via `.icon-btn` / `.chip`; removed the inline `onMouseEnter/onMouseLeave` mutation on the monitor's close/cancel buttons. (`app/page.tsx` hover still inline — separate sweep.)
+- [~] Skeletons / empty / error states. Monitor now uses a shimmer skeleton (was a bare spinner), an `.empty-state`, and designed `.banner` terminal states. Roll the same patterns out app-wide.
 - [ ] Set up Storybook (or Ladle) so primitives have living docs and visual review; add a "design QA" pass to the PR checklist.
 
 ### 5.2 Live compute monitoring — replace "Running" with a real cockpit
-The compute tab currently shows little more than a status word + 2 s HTTP poll. The Rust gateway now streams real per-iteration `Progress` (energy, iteration, total). Make the running state feel alive and instrument-grade.
-- [ ] WS-first: subscribe to `/ws/jobs/{id}` as the primary feed; demote the 2 s `/api/calculations/{id}` poll (`ExperimentMonitor.tsx:258`) to a reconnect-only backstop.
-- [ ] Live convergence curve: stream energy-vs-iteration into the recharts plot as frames arrive; HF/FCI reference lines; auto-rescaling y-axis; current/best-energy + ΔE-to-reference readouts; gradient-norm sparkline when present.
-- [ ] Live status header: connection state (connected / reconnecting / degraded-to-poll), wall-clock + ETA from iteration rate, eval count, throughput (evals/s).
-- [ ] Designed execution timeline (stages → phases) replacing the raw `●◉○` list; per-phase durations.
-- [ ] Streaming log pane: virtualized, level-filtered, copy/download, autoscroll-with-pause — not a raw `#111` terminal dump.
-- [ ] First-class **Cancel** affordance wired to `POST /api/calculations/{id}/cancel` with optimistic state + confirmation.
-- [ ] Polished terminal states (converged / failed / cancelled / timed-out) with result summary cards and "open full report" CTA.
+The compute tab currently shows little more than a status word + 2 s HTTP poll. The Rust gateway now streams real per-iteration `Progress` (energy, iteration, total). Make the running state feel alive and instrument-grade. **Reworked in the Phase-5 commit** (`ExperimentMonitor.tsx` rewritten):
+- [x] WS-first: `connectionMode` state (`connecting`/`live`/`polling`); a WS frame flips to `live` and demotes the 2 s poll to a backstop; header shows a wifi/wifi-off connection chip. Progress frames now also append to the convergence series so the curve advances live.
+- [x] Live convergence curve: streams energy-vs-iteration; HF/FCI reference lines; auto-rescaling y-axis; theme-aware (CSS-var) strokes/tooltip; current + best-energy + ΔE-vs-HF + error-vs-FCI (mHa, chemical-accuracy colored) readouts. Gradient-norm sparkline still TODO (payload field exists).
+- [x] Live status header: connection state, wall-clock, eval count, throughput (evals/s), solver + backend chips with fallback strike-through. (Honest ETA needs a reliable `total`; deferred rather than faked.)
+- [x] Designed execution timeline with `Icon` step states (active = activity, done = check) replacing the raw `●◉○` list. Per-phase durations still TODO.
+- [~] Streaming log pane: token-driven `.console` (theme-aware, was a hardcoded `#111` dump), per-level coloring, copy + download buttons, autoscroll. Still TODO: virtualization + level filter + autoscroll-pause.
+- [x] First-class **Cancel** wired to `apiClient.cancelCalculation` (`POST /api/calculations/{id}/cancel`); button disables while the terminal state propagates.
+- [~] Polished terminal states: failed/cancelled render a designed `.banner`; completed hands off to `ResultsDisplay`. A dedicated result-summary card + "open full report" CTA still TODO.
+
+**Verification gap:** typecheck (`tsc --noEmit`) clean and no new lint errors, but the live cockpit was **not driven in a browser** this session — exercising a running job needs the full stack (Postgres + auth + a connected compute node). Manual e2e still owed.
 
 ### 5.3 Quantum/chemistry visualization depth
 - [ ] Circuit diagram renderer for the ansatz (today it's text in `CustomAnsatzDesigner`) — gate-level SVG with qubit lines, parameter labels, layer grouping.
