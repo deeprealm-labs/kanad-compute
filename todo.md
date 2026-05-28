@@ -210,7 +210,7 @@ The compute tab currently shows little more than a status word + 2 s HTTP poll. 
 **Verification gap:** typecheck (`tsc --noEmit`) clean and no new lint errors, but the live cockpit was **not driven in a browser** this session — exercising a running job needs the full stack (Postgres + auth + a connected compute node). Manual e2e still owed.
 
 ### 5.3 Quantum/chemistry visualization depth
-- [ ] Circuit diagram renderer for the ansatz (today it's text in `CustomAnsatzDesigner`) — gate-level SVG with qubit lines, parameter labels, layer grouping.
+- [x] Circuit diagram renderer. (The original survey was wrong — it's **not** text-based.) `visualization/CircuitViewer.tsx` is already a full gate-level SVG: column-packed layout, HF-init/layer/measure sections, qubit wires, parameter labels, hover tooltip, depth/CNOT-budget/feasibility stats. Phase-5 commit made it **theme-aware** — replaced ~all hardcoded light-only hex (white bg, light borders, dark text, wire colors) with design tokens so it renders correctly in dark mode; emoji `⚛` empty-state → `Icon` + `.empty-state`; disabled-state colors → tokens. Gate-fill palette + white gate labels kept (legible on both themes). Still open: per-gate-type token palette, virtualized/zoomable very-wide circuits.
 - [ ] Molecular orbital / electron-density surfaces in the 3D viewer (`MoleculeViewer3D.tsx` is atoms+bonds only) — isosurface rendering from cube/grid data.
 - [ ] Potential-energy-surface / dissociation-curve plotting and parameter-landscape views for sweeps.
 - [ ] Results dashboard: dipole, bond lengths/angles, populations, spectra — presented as designed data cards, not bare tables.
