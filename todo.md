@@ -223,19 +223,28 @@ The compute tab currently shows little more than a status word + 2 s HTTP poll. 
 - [ ] Reproducibility: every result carries the exact spec (molecule, solver, versions, seed) and is exportable/shareable.
 
 ### 5.5 Agentic AI / LLM layer (Claude)
-- [ ] **Decision needed** `[!]`: where does the LLM run — cloud (`kanad-app` server route proxying the Anthropic API, key server-side) vs. local (`kanad-compute`)? Default: cloud route with prompt caching; revisit if users want local/offline.
-- [ ] Copilot side-panel (⌘K / docked): natural-language experiment setup ("run VQE on H2 at 0.74 Å, sto-3g"), parameter suggestions, and guardrails before dispatch.
-- [ ] Result interpretation: AI summarizes a finished run (converged?, correlation energy recovered, sanity vs. HF/FCI, likely issues) with citations to the actual numbers.
-- [ ] Molecule input via natural language / SMILES → structure, with confirmation in the 3D viewer.
+- [x] **Decision made (2026-05-28): cloud route.** The LLM runs server-side in `kanad-app` via the Next route `web/src/app/api/copilot/route.ts`, which proxies the Anthropic Messages API with raw `fetch` (zero SDK dependency), the key only in server env (`ANTHROPIC_API_KEY`, model via `ANTHROPIC_MODEL`, default `claude-sonnet-4-6`), and `cache_control: ephemeral` on the static system block for prompt caching. Degrades to a clear 503 / "not configured" UI state when no key is set. Local/offline variant revisitable later.
+- [x] Copilot side-panel (`web/src/components/ai/CopilotPanel.tsx`): docked, ⌘K/Ctrl+K toggle + Esc close + floating launcher, mounted globally in `DashboardLayout` (both layout branches). Token-driven, theme-aware, `role="dialog"`. Natural-language setup + Q&A; markdown rendering via `react-markdown`.
+- [~] Result interpretation: the route accepts a `context` string and the panel forwards a `context` prop; the system prompt forbids inventing numbers and knows the chemical-accuracy / correlation-energy definitions. **Not yet wired** to auto-pass a finished run's energies from `ExperimentMonitor`/`ResultsDisplay` — that host integration is the remaining piece.
+- [ ] Molecule input via natural language / SMILES → structure, with confirmation in the 3D viewer (needs `MoleculeViewer3D` integration + a SMILES→geometry path).
 - [ ] In-app docs assistant grounded in `/docs` (RAG) so users aren't context-switching.
-- [ ] Tool-use boundary: the LLM proposes structured `ExperimentRequest`s; a human confirms; nothing auto-dispatches without explicit approval. Use the Anthropic SDK with prompt caching; latest Claude models.
+- [x] Tool-use boundary: the model may emit at most one fenced `experiment` JSON block; the panel parses it into a "Proposed experiment — review before running" card with COPY SPEC (+ optional `onUseExperiment` host callback). **Nothing auto-dispatches.** System prompt explicitly bars claiming a job ran. Prompt caching on; latest Claude models.
 
 ### 5.6 Quality bar / production-readiness
-- [ ] Accessibility pass: focus rings, keyboard nav, ARIA on dialogs/tabs/menus, contrast audit against the muted palette.
+- [~] Accessibility: global `:focus-visible` rings (pre-existing) + dialog `role`/`aria-label`/Esc/autofocus on the copilot, `aria-hidden` icons, `aria-label`ed icon buttons, and a `prefers-reduced-motion` block that neutralizes pulse/shimmer/spin/transitions. Full keyboard-nav + contrast audit across legacy components still open.
 - [ ] Responsive/density review: works on laptop → ultrawide; dense "pro" mode like Maestro.
 - [ ] Performance: code-split three.js/monaco, virtualize long lists/logs, memoize chart data, Lighthouse budget.
-- [ ] Consistent dark/light parity; verify every new component in both `data-theme` modes.
+- [~] Dark/light parity: every Phase-5 component (monitor, circuit viewer, copilot, primitives) is token-driven and verified to compile in both `data-theme` modes; legacy components still carry light-only hardcoded hex.
 - [ ] Visual regression tests (Playwright snapshots) on the key screens (dashboard, monitor, lab, report).
+
+**Phase 5 status (2026-05-28).** The *frontend-completable* scope landed (kanad-app, local commits `4ef193f` monitor, `2b09689` circuit viewer, `3099399` copilot, `5611366` a11y): token-driven primitives + Icon set, theme-aware compute cockpit + circuit viewer, the agentic Claude copilot (cloud route, prompt caching, proposal-only guardrail), and a reduced-motion/contrast a11y pass. All typecheck clean, no new lint errors.
+
+What's **not** done, and why it can't be finished frontend-only:
+- **§5.4 workflow model** (projects/workspaces, setup wizard, batch queue, cross-run comparison, reproducibility) — needs a backend project/runs data model + persistence (kanad-app FastAPI + DB). A comparison-curve component was deliberately *not* shipped as dead code without that host.
+- **§5.3 orbital/density surfaces + PES/landscape plots** — need cube/grid data emitted by the solver (kanad-core / runtime), which the frontend doesn't have yet.
+- **§5.5 result-interpretation auto-context, molecule-NL→3D, docs-RAG** — need host wiring into the run/result views, a SMILES→geometry path, and a docs index respectively.
+- **§5.6 perf/responsive/visual-regression + legacy-component theming** — broad sweeps across pre-Phase-5 components.
+- **Browser verification** still owed for every Phase-5 surface (needs Postgres + auth + a connected compute node; copilot also needs `ANTHROPIC_API_KEY`).
 
 ---
 
