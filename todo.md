@@ -155,6 +155,7 @@ Goal: kill the 2-second `/api/compute/jobs` polling loop in `remote_worker.py`. 
 ### 3.3 Solver migration (Tier 1 → Tier 2)
 - [x] Build the statevector simulator natively. `runtime/statevector.rs` implements a dense `StateVector<Complex64>` with single-qubit gates (I/X/Y/Z/H/S/T/RX/RY/RZ/phase), controlled-1q gates (CNOT/CZ), SWAP, in-place stride-based application, and a compact `Op` enum so ansätze can hand the simulator a `Vec<Op>`. `runtime/pauli.rs` adds `PauliString` / `PauliSum` with Hermitian expectation values computed in O(N) per term (no matrix materialization), Qiskit-convention `from_label` parser, and Bell/H2-minimal sanity tests. 15 unit tests passing.
 - [~] Port basic VQE. `runtime/ansatz.rs` ships a hardware-efficient ansatz (RY+RZ per qubit, linear CNOT entangler, configurable layer count). `runtime/optim.rs` ships a self-contained Nelder-Mead minimizer (Rosenbrock-tested). `runtime/vqe.rs` glues them into a `vqe(hamiltonian, ansatz, cfg, &mut cb)` entry point with a per-evaluation callback (cancel + progress bridge). Test against the 2-qubit H2 Hamiltonian (O'Malley 2016 coefficients) reaches E < -1.84 Ha, beating HF. Still open: parameter-shift gradients + L-BFGS via `argmin`; for a 2-qubit toy NM is fine but it won't scale to PhysicsVQE / HardwareVQE param counts.
+- [x] Wire `kanad-runtime::vqe` into the gateway. `runtime/solver.rs` adds `VqeSolver` (impl `Solver`): decodes a pre-mapped qubit Hamiltonian from `SolverSpec.extra["hamiltonian"]` (list of `{label, coeff}`, Qiskit convention; native integrals deferred to the PhysicsVQE/HardwareVQE port), builds the HEA from `solver.n_layers`, runs VQE, and bridges each optimizer evaluation to `ProgressSink::emit_progress` (monotone convergence curve, full history in the FinalResult) + `CancelToken` (cooperative stop → `SolverError::Cancelled`). `gateway::client::default_factory()` dispatches `"vqe"` → `VqeSolver`, everything else → `UnimplementedSolver`; CLI `connect` now uses it, so `kanad-compute connect` runs real VQE and streams live `Progress` events. 5 solver tests (H2 beats HF, monotone progress, missing/ragged Hamiltonian errors, cancel propagates).
 - [ ] Port PhysicsVQE governance layer
 - [ ] Port HardwareVQE (transpilation pipeline; backend abstraction)
 - [ ] Wrap remaining Python solvers via PyO3 shim (Tier 2): SQD, qEOM, advanced ansätze. Hide them behind the same `Solver` trait so callers don't care which tier handled the job.
@@ -179,39 +180,96 @@ Once Rust compute is the default and stable:
 
 ---
 
-## 5. Cross-cutting / not-tied-to-a-phase
+## 5. Phase 5 — Frontend professionalization & institutional-grade UX (kanad-app)
 
-### 5.1 Testing
+**Repo:** `kanad-app` (`web/`). Next.js 16 (App Router) · React 19 · Tailwind 4 + CSS variables · three.js/@react-three-fiber · recharts · @monaco-editor · framer-motion · zustand-style stores. **No component library today** (all bespoke).
+
+**Goal (issue from the owner):** the product is real science with a strong visual *direction* (muted gold `#A89068`, EB Garamond / Inter / JetBrains Mono, sharp `border-radius:0`, dark mode via `data-theme`) but the *implementation* reads "vibe-coded" — 56+ inline-style objects in `ExperimentMonitor.tsx` alone, hardcoded hex/px scattered across components, emoji icons (🔬⚛️💻), no skeleton/empty/error states, hover handled via inline `onMouseEnter` mutations. Lift it to look and behave like premium scientific software (Schrödinger Maestro, BIOVIA, Materials Studio): consistent, dense, calm, trustworthy — and weave in a modern agentic-AI/LLM layer. This is a ~$20M project; the UI should not undercut the science.
+
+This phase is **kanad-app frontend** work and is independent of the Rust runtime, but §5.2 directly consumes the live `Progress` events the Rust gateway now emits (Phase 3.3 `VqeSolver` → `ProgressSink`).
+
+### 5.1 Design-system consolidation (kill the ad-hoc styling)
+- [ ] Extract the `globals.css` CSS variables into a documented token layer (color / spacing / typography / elevation / motion). Single source of truth; no raw hex or px in component files.
+- [ ] Stand up a headless component primitive library (shadcn-style on Radix, themed to the existing tokens — keep sharp edges, muted palette): Button, Input, Select, Dialog, Tooltip, Tabs, Table, Card, Badge/StatusPill, Toast, Skeleton, EmptyState, Popover, Command palette (⌘K).
+- [ ] Replace **all** inline `style={{…}}` objects in `web/src/components/molecular/*` (start with `ExperimentMonitor.tsx:388–684`) with token-driven classes / primitives.
+- [ ] Replace emoji icons with a real icon set (Lucide) — `BackendSelector.tsx:40–70`, the `●◉○` timeline glyphs in `ExperimentMonitor.tsx:362–366`.
+- [ ] CSS-based hover/focus/active states with consistent transition timing; remove inline `onMouseEnter/onMouseLeave` style mutation (`ExperimentMonitor.tsx:667`, `app/page.tsx:137–141`).
+- [ ] Loading **skeletons**, **empty states**, and designed **error states** everywhere a spinner or bare string lives today.
+- [ ] Set up Storybook (or Ladle) so primitives have living docs and visual review; add a "design QA" pass to the PR checklist.
+
+### 5.2 Live compute monitoring — replace "Running" with a real cockpit
+The compute tab currently shows little more than a status word + 2 s HTTP poll. The Rust gateway now streams real per-iteration `Progress` (energy, iteration, total). Make the running state feel alive and instrument-grade.
+- [ ] WS-first: subscribe to `/ws/jobs/{id}` as the primary feed; demote the 2 s `/api/calculations/{id}` poll (`ExperimentMonitor.tsx:258`) to a reconnect-only backstop.
+- [ ] Live convergence curve: stream energy-vs-iteration into the recharts plot as frames arrive; HF/FCI reference lines; auto-rescaling y-axis; current/best-energy + ΔE-to-reference readouts; gradient-norm sparkline when present.
+- [ ] Live status header: connection state (connected / reconnecting / degraded-to-poll), wall-clock + ETA from iteration rate, eval count, throughput (evals/s).
+- [ ] Designed execution timeline (stages → phases) replacing the raw `●◉○` list; per-phase durations.
+- [ ] Streaming log pane: virtualized, level-filtered, copy/download, autoscroll-with-pause — not a raw `#111` terminal dump.
+- [ ] First-class **Cancel** affordance wired to `POST /api/calculations/{id}/cancel` with optimistic state + confirmation.
+- [ ] Polished terminal states (converged / failed / cancelled / timed-out) with result summary cards and "open full report" CTA.
+
+### 5.3 Quantum/chemistry visualization depth
+- [ ] Circuit diagram renderer for the ansatz (today it's text in `CustomAnsatzDesigner`) — gate-level SVG with qubit lines, parameter labels, layer grouping.
+- [ ] Molecular orbital / electron-density surfaces in the 3D viewer (`MoleculeViewer3D.tsx` is atoms+bonds only) — isosurface rendering from cube/grid data.
+- [ ] Potential-energy-surface / dissociation-curve plotting and parameter-landscape views for sweeps.
+- [ ] Results dashboard: dipole, bond lengths/angles, populations, spectra — presented as designed data cards, not bare tables.
+
+### 5.4 Workflow upgrade (Schrödinger/BIOVIA-class)
+- [ ] Project/workspace model: group molecules + experiments + reports under a named project with history and provenance.
+- [ ] Guided experiment-setup wizard (molecule → method → basis → solver → backend) with validation, presets, and cost/qubit/time estimates before submit.
+- [ ] Job queue / batch view: many experiments at once, filter/sort/compare, parameter sweeps, re-run with tweaks.
+- [ ] Comparison view: overlay convergence curves / energies across runs; diff parameters.
+- [ ] Reproducibility: every result carries the exact spec (molecule, solver, versions, seed) and is exportable/shareable.
+
+### 5.5 Agentic AI / LLM layer (Claude)
+- [ ] **Decision needed** `[!]`: where does the LLM run — cloud (`kanad-app` server route proxying the Anthropic API, key server-side) vs. local (`kanad-compute`)? Default: cloud route with prompt caching; revisit if users want local/offline.
+- [ ] Copilot side-panel (⌘K / docked): natural-language experiment setup ("run VQE on H2 at 0.74 Å, sto-3g"), parameter suggestions, and guardrails before dispatch.
+- [ ] Result interpretation: AI summarizes a finished run (converged?, correlation energy recovered, sanity vs. HF/FCI, likely issues) with citations to the actual numbers.
+- [ ] Molecule input via natural language / SMILES → structure, with confirmation in the 3D viewer.
+- [ ] In-app docs assistant grounded in `/docs` (RAG) so users aren't context-switching.
+- [ ] Tool-use boundary: the LLM proposes structured `ExperimentRequest`s; a human confirms; nothing auto-dispatches without explicit approval. Use the Anthropic SDK with prompt caching; latest Claude models.
+
+### 5.6 Quality bar / production-readiness
+- [ ] Accessibility pass: focus rings, keyboard nav, ARIA on dialogs/tabs/menus, contrast audit against the muted palette.
+- [ ] Responsive/density review: works on laptop → ultrawide; dense "pro" mode like Maestro.
+- [ ] Performance: code-split three.js/monaco, virtualize long lists/logs, memoize chart data, Lighthouse budget.
+- [ ] Consistent dark/light parity; verify every new component in both `data-theme` modes.
+- [ ] Visual regression tests (Playwright snapshots) on the key screens (dashboard, monitor, lab, report).
+
+---
+
+## 6. Cross-cutting / not-tied-to-a-phase
+
+### 6.1 Testing
 - [x] Protocol round-trip fuzz tests on both sides (`tests/test_protocol_fuzz.py`): identical `_FUZZ_SEED=0xCAFEBABE`, 200 iterations across all five kinds. If a payload field is renamed on one side, both tests fail in lock-step.
 - [ ] Compute integration test: in-process FastAPI app + `ComputeWSClient` connecting to it; submit a fake `ExperimentRequest`; assert browser-fanout payload arrives at a mock `connection_manager`
 - [ ] Reconnect + replay test: kill the server mid-experiment, assert events redelivered
 - [ ] Backpressure test: slow the server reader, assert outbox grows, no events lost
 
-### 5.2 Observability
+### 6.2 Observability
 - [ ] Structured logging on both sides with `experiment_id` correlation
 - [ ] Cloud: per-user "compute" dashboard page — connected status, last ping, in-flight count, last error
 - [ ] Compute TUI mirrors the same data locally
 
-### 5.3 Distribution
+### 6.3 Distribution
 - [ ] PyPI: `kanad-compute` already has `pyproject.toml`; verify wheel builds + publishes from CI
 - [ ] Homebrew tap (Phase 3): `brew install deeprealm-labs/tap/kanad-compute`
 - [ ] Windows installer (Phase 3): MSI via `cargo wix` or similar
 - [ ] Auto-update channel — opt-in, prompted on connect if version mismatch in `Registered`
 
-### 5.4 Security review
+### 6.4 Security review
 - [ ] Threat model document: what does compromise of the cloud DB now expose? (Should be: nothing material — no creds, no results-in-flight.)
 - [ ] Threat model: what does compromise of a user's machine expose? (Their own vault — same as today, but now also session tokens.)
 - [ ] Pen-test the device-auth flow before announcing
 - [ ] Rate-limit `compute_connect` per user, per IP
 
-### 5.5 Docs
+### 6.5 Docs
 - [ ] User-facing README in `kanad-compute`: install, login, connect, creds
 - [ ] Architecture doc in `kanad-app`: cloud responsibilities, compute responsibilities, where the line is
 - [ ] Migration guide for users on the old polling worker
 
 ---
 
-## 6. Decisions still open
+## 7. Decisions still open
 
 - [x] **Multi-node per user (decided 2026-05).** "Bump previous session." When a new connection arrives for a user with an existing session, the old WS is closed (1001 GOING_AWAY, reason=`superseded`) and replaced. Rationale: reconnect after a network blip arrives BEFORE the dead session's heartbeat times out (~30 s), so rejecting the new connection would force the user to wait through that window. Matches `gh auth login` / `claude login` conventions. Multi-device support proper arrives with device-token auth (2.3).
 - [!] **Browser Path A (direct localhost) vs Path B (proxy).** Path A needs CORS + self-signed-cert UX or a localhost-trusted-origin trick; Path B is a non-decision (works today). Default: ship Path B in Phase 1, evaluate Path A demand.
@@ -220,9 +278,9 @@ Once Rust compute is the default and stable:
 
 ---
 
-## 7. Immediate next actions
+## 8. Immediate next actions
 
-Phase 1 + **all** of Phase 2 (2.1a / 2.1b / 2.2 / 2.3 / 2.4 except headless-Linux fallback / 2.5) + §6.1 / §6.4 are **code-complete and test-covered**.
+Phase 1 + **all** of Phase 2 (2.1a / 2.1b / 2.2 / 2.3 / 2.4 except headless-Linux fallback / 2.5) + §7.1 / §7.4 are **code-complete and test-covered**.
 
 Open PRs (stacked on existing branches, not yet merged):
 - `deeprealm-labs/kanad-compute#2` — Phase 2.1 + 2.2 + 2.4 + 2.3-CLI (login command + vault token + WS prefers JWT)
@@ -244,8 +302,14 @@ Phase 2 deferred items (not blocking Phase 3 kickoff):
 - **`/dashboard/devices` revocation UI** — defer until first multi-device user. Today: `UPDATE device_codes SET status='denied' WHERE user_code='…'` does the job.
 - **Encrypted file vault fallback** (2.4 tail) — only needed for headless Linux; punted until a real user hits it.
 
-§6 status:
-- §6.1 (multi-node) — **decided**: bump previous session, structured log.
-- §6.4 (solver versioning) — **decided**: advertise `kanad_core_version`; no server refusal yet.
-- §6.2 Path A vs B — still `[!]`, decide before Phase 3.
-- §6.3 TUI log source — still `[!]`, decide before 3.4.
+§7 status:
+- §7.1 (multi-node) — **decided**: bump previous session, structured log.
+- §7.4 (solver versioning) — **decided**: advertise `kanad_core_version`; no server refusal yet.
+- §7.2 Path A vs B — still `[!]`, decide before Phase 3.
+- §7.3 TUI log source — still `[!]`, decide before 3.4.
+
+Phase 3 (Rust) status — branch `ws-gateway-phase2-progress`, stacked on `vivekpal1`:
+- §3.1/§3.2 complete; §3.3 statevector + Pauli + HEA + Nelder-Mead VQE done, and `VqeSolver` is now wired into `gateway::default_factory()` so `kanad-compute connect` runs real VQE and streams live `Progress`. Rust workspace: **56 tests**, clippy clean.
+- Next Rust slices: argmin L-BFGS + parameter-shift gradients (§3.3); native molecule→Hamiltonian lowering so `VqeSolver` no longer needs a pre-mapped `extra["hamiltonian"]`; then PhysicsVQE/HardwareVQE ports.
+
+Phase 5 (frontend) status — **planned, not started**. Highest-leverage first slices: §5.1 design-token + primitive extraction (unblocks everything), then §5.2 live monitoring cockpit (consumes the Progress events the gateway now emits). §5.5 LLM-runtime location is the open decision to make before building the copilot.
