@@ -570,3 +570,18 @@ pub fn unimplemented_factory() -> SolverFactory {
     })
 }
 
+/// Production factory: dispatches solver names to native Tier-1 solvers,
+/// falling back to `UnimplementedSolver` (which surfaces a clean
+/// `not_implemented` Error event) for anything not yet ported.
+pub fn default_factory() -> SolverFactory {
+    Arc::new(|name: &str| -> Option<Box<dyn Solver>> {
+        match name {
+            "vqe" => Some(Box::new(kanad_runtime::VqeSolver)),
+            other => {
+                let leaked: &'static str = Box::leak(other.to_owned().into_boxed_str());
+                Some(Box::new(kanad_runtime::UnimplementedSolver(leaked)))
+            }
+        }
+    })
+}
+

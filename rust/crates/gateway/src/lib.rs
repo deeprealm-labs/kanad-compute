@@ -11,6 +11,6 @@ pub mod outbox;
 pub mod seq_state;
 
 pub use backoff::Backoff;
-pub use client::{ClientConfig, GatewayClient, SolverFactory};
+pub use client::{default_factory, unimplemented_factory, ClientConfig, GatewayClient, SolverFactory};
 pub use outbox::{Outbox, OutboxRow};
 pub use seq_state::SeqState;

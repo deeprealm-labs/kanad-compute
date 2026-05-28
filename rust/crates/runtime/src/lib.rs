@@ -10,6 +10,9 @@ pub mod pauli;
 pub mod ansatz;
 pub mod optim;
 pub mod vqe;
+pub mod solver;
+
+pub use solver::VqeSolver;
 
 use kanad_protocol::{ExperimentRequest, FinalResultPayload, ProgressPayload};
 use thiserror::Error;

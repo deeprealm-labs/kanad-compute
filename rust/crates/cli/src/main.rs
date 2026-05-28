@@ -5,7 +5,7 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use kanad_auth::DeviceFlow;
-use kanad_gateway::client::unimplemented_factory;
+use kanad_gateway::client::default_factory;
 use kanad_gateway::{ClientConfig, GatewayClient};
 use kanad_vault::{Vault, CANONICAL_KEYS};
 use std::io::{self, Write};
@@ -182,7 +182,7 @@ async fn cmd_connect(base_url: &str, node_id_override: Option<String>) -> Result
         .unwrap_or_else(default_node_id);
 
     let cfg = ClientConfig::new(base_url, token, node_id);
-    let client = GatewayClient::new(cfg, unimplemented_factory())
+    let client = GatewayClient::new(cfg, default_factory())
         .context("initialize gateway client")?;
 
     tracing::info!(url = %client.config.ws_url(), node_id = %client.config.node_id,
