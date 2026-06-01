@@ -6,9 +6,20 @@
 //! L-BFGS / COBYLA / parameter-shift gradients without callers caring.
 
 use crate::ansatz::Ansatz;
-use crate::optim::{Minimizer, NelderMead};
+use crate::optim::{Lbfgs, Minimizer, NelderMead};
 use crate::pauli::PauliSum;
 use crate::statevector::run_circuit;
+
+/// Which optimizer drives the VQE objective.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OptimizerKind {
+    /// Gradient-free downhill simplex. Robust default for low param counts.
+    #[default]
+    NelderMead,
+    /// Limited-memory BFGS with analytic parameter-shift gradients. Scales
+    /// to the larger parameter counts where the simplex method stalls.
+    Lbfgs,
+}
 
 /// Per-iteration callback. Used by `Solver::run` to bridge into the
 /// gateway's `ProgressSink`. Returning `true` halts the optimizer.
@@ -37,6 +48,7 @@ pub struct VqeConfig {
     pub max_iters: usize,
     pub ftol: f64,
     pub initial_params: Option<Vec<f64>>,
+    pub optimizer: OptimizerKind,
 }
 
 impl Default for VqeConfig {
@@ -45,6 +57,7 @@ impl Default for VqeConfig {
             max_iters: 500,
             ftol: 1e-6,
             initial_params: None,
+            optimizer: OptimizerKind::default(),
         }
     }
 }
@@ -63,12 +76,6 @@ pub fn vqe<A: Ansatz, C: VqeCallback>(
         .clone()
         .unwrap_or_else(|| vec![0.0; n_params]);
     assert_eq!(x0.len(), n_params, "initial param length mismatch");
-
-    let nm = NelderMead {
-        max_iters: cfg.max_iters,
-        ftol: cfg.ftol,
-        initial_step: 0.5,
-    };
 
     let mut evals = 0usize;
     let mut cancelled = false;
@@ -89,7 +96,21 @@ pub fn vqe<A: Ansatz, C: VqeCallback>(
             }
             e
         };
-        nm.minimize(x0, &mut objective)
+        // Both optimizers consume the identical objective; the parameter-shift
+        // gradients L-BFGS needs are derived from it inside the optimizer.
+        match cfg.optimizer {
+            OptimizerKind::NelderMead => NelderMead {
+                max_iters: cfg.max_iters,
+                ftol: cfg.ftol,
+                initial_step: 0.5,
+            }
+            .minimize(x0, &mut objective),
+            OptimizerKind::Lbfgs => Lbfgs {
+                max_iters: cfg.max_iters,
+                ..Lbfgs::default()
+            }
+            .minimize(x0, &mut objective),
+        }
     };
 
     VqeResult {
@@ -116,6 +137,7 @@ mod tests {
             max_iters: 1000,
             ftol: 1e-8,
             initial_params: Some(vec![0.1; ansatz.parameter_count()]),
+            ..VqeConfig::default()
         };
         let mut cb = NoCallback;
         let result = vqe(&h, &ansatz, &cfg, &mut cb);
@@ -145,6 +167,7 @@ mod tests {
                     .map(|i| 0.1 * (i as f64).sin())
                     .collect(),
             ),
+            ..VqeConfig::default()
         };
         let mut cb = NoCallback;
         let r = vqe(&h, &ansatz, &cfg, &mut cb);
@@ -152,6 +175,41 @@ mod tests {
         // find the global min every time, but should beat any computational
         // basis state (which sit around -1.117 to -1.84).
         assert!(r.energy < -1.84, "VQE energy {} should beat HF", r.energy);
+    }
+
+    #[test]
+    fn vqe_lbfgs_reaches_h2_ground_state() {
+        // Same H2 Hamiltonian, but driven by L-BFGS with parameter-shift
+        // gradients. Because the gradients are exact for this Pauli-rotation
+        // ansatz, L-BFGS should converge to the true ground state (≈ -1.857)
+        // tighter than Nelder-Mead, well below chemical accuracy.
+        let h = PauliSum::new(vec![
+            from_label("II", -1.0523732),
+            from_label("IZ", 0.39793742),
+            from_label("ZI", -0.39793742),
+            from_label("ZZ", -0.01128010),
+            from_label("XX", 0.18093119),
+            from_label("YY", 0.18093119),
+        ]);
+        let ansatz = HardwareEfficientAnsatz::new(2, 3);
+        let cfg = VqeConfig {
+            max_iters: 500,
+            ftol: 1e-10,
+            initial_params: Some(
+                (0..ansatz.parameter_count())
+                    .map(|i| 0.1 * (i as f64).sin())
+                    .collect(),
+            ),
+            optimizer: OptimizerKind::Lbfgs,
+        };
+        let mut cb = NoCallback;
+        let r = vqe(&h, &ansatz, &cfg, &mut cb);
+        assert!(
+            r.energy < -1.8565,
+            "L-BFGS VQE energy {} should reach the H2 ground state",
+            r.energy
+        );
+        assert!(!r.cancelled);
     }
 
     #[test]

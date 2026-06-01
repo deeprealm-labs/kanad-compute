@@ -13,7 +13,7 @@
 use crate::ansatz::{Ansatz, HardwareEfficientAnsatz};
 use crate::pauli::{from_label, PauliSum};
 use crate::statevector::run_circuit;
-use crate::vqe::{vqe, VqeCallback, VqeConfig};
+use crate::vqe::{vqe, OptimizerKind, VqeCallback, VqeConfig};
 use crate::{CancelToken, ProgressSink, Solver, SolverError};
 use kanad_protocol::{ExperimentRequest, FinalResultPayload, ProgressPayload, SolverSpec};
 use std::collections::HashMap;
@@ -55,6 +55,7 @@ impl Solver for VqeSolver {
         let n_params = ansatz.parameter_count();
         let initial_params: Vec<f64> = (0..n_params).map(|i| 0.1 * (i as f64).sin()).collect();
 
+        let optimizer = select_optimizer(request.solver.optimizer.as_deref());
         let cfg = VqeConfig {
             max_iters: request.solver.max_iterations.max(1) as usize,
             ftol: request
@@ -63,6 +64,7 @@ impl Solver for VqeSolver {
                 .filter(|t| *t > 0.0)
                 .unwrap_or(1e-6),
             initial_params: Some(initial_params),
+            optimizer,
         };
 
         // Hartree-Fock reference: ⟨0…0|H|0…0⟩, the all-zeros computational
@@ -92,7 +94,13 @@ impl Solver for VqeSolver {
         extra.insert("n_layers".into(), serde_json::json!(n_layers));
         extra.insert("n_parameters".into(), serde_json::json!(n_params));
         extra.insert("ansatz".into(), serde_json::json!("hardware_efficient"));
-        extra.insert("optimizer".into(), serde_json::json!("nelder_mead"));
+        extra.insert(
+            "optimizer".into(),
+            serde_json::json!(match optimizer {
+                OptimizerKind::NelderMead => "nelder_mead",
+                OptimizerKind::Lbfgs => "lbfgs",
+            }),
+        );
 
         Ok(FinalResultPayload {
             energy: Some(result.energy),
@@ -165,6 +173,16 @@ fn decode_hamiltonian(spec: &SolverSpec) -> Result<PauliSum, SolverError> {
         sum.push(from_label(label, coeff));
     }
     Ok(sum)
+}
+
+/// Map the wire-level `SolverSpec.optimizer` string onto a native optimizer.
+/// Any L-BFGS spelling selects the gradient-based path; everything else
+/// (including `None`) falls back to the robust Nelder-Mead default.
+fn select_optimizer(name: Option<&str>) -> OptimizerKind {
+    match name.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
+        Some("lbfgs") | Some("l-bfgs") | Some("l_bfgs") | Some("bfgs") => OptimizerKind::Lbfgs,
+        _ => OptimizerKind::NelderMead,
+    }
 }
 
 /// Bridges the VQE optimizer's per-evaluation callback onto the gateway's
@@ -269,6 +287,34 @@ mod tests {
         assert!(!sink.0.is_empty());
         assert!(out.convergence_history.unwrap().len() >= sink.0.len());
         assert_eq!(out.extra["n_qubits"], serde_json::json!(2));
+    }
+
+    #[test]
+    fn lbfgs_optimizer_selected_and_converges() {
+        let mut req = h2_request(HashMap::from([("hamiltonian".into(), h2_hamiltonian())]));
+        req.solver.optimizer = Some("lbfgs".into());
+        req.solver.convergence_threshold = Some(1e-10);
+        let mut sink = CollectSink(Vec::new());
+        let cancel = NeverCancelled;
+        let out = VqeSolver.run(&req, &mut sink, &cancel).unwrap();
+        let energy = out.energy.unwrap();
+        // Exact parameter-shift gradients let L-BFGS reach the true H2 ground
+        // state (≈ -1.857) to within chemical accuracy.
+        assert!(
+            energy < -1.8565,
+            "L-BFGS VQE energy {energy} should reach ground state"
+        );
+        assert_eq!(out.extra["optimizer"], serde_json::json!("lbfgs"));
+    }
+
+    #[test]
+    fn unknown_optimizer_falls_back_to_nelder_mead() {
+        let mut req = h2_request(HashMap::from([("hamiltonian".into(), h2_hamiltonian())]));
+        req.solver.optimizer = Some("cobyla".into());
+        let mut sink = CollectSink(Vec::new());
+        let cancel = NeverCancelled;
+        let out = VqeSolver.run(&req, &mut sink, &cancel).unwrap();
+        assert_eq!(out.extra["optimizer"], serde_json::json!("nelder_mead"));
     }
 
     #[test]
