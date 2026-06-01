@@ -170,6 +170,8 @@ Goal: kill the 2-second `/api/compute/jobs` polling loop in `remote_worker.py`. 
 
 ## 4. Phase 4 — Cloud reduction & cleanup
 
+> **Reversed by §9 (2026-06).** This phase planned to *remove* solver code from the cloud once the external Rust node was the default. The 2026-06 pivot does the opposite: compute moves BACK into the `kanad-app` backend and the external node is archived. The cleanup that still applies (deleting the polling endpoints, the WS gateway, device-auth, dormant workers, and the `kanad_compute_key` column) is re-homed under §9.4. Read §9 first.
+
 Once Rust compute is the default and stable:
 
 - [ ] Delete the ~6.2k LOC of solver code from `kanad-app/api/` (keep only validation / shape-checks needed for dispatch)
@@ -293,6 +295,8 @@ What's **not** done, and why it can't be finished frontend-only:
 
 ## 8. Immediate next actions
 
+> **Superseded by §9 (2026-06) — see the note at the end of this section.** Everything below describes finishing the external-node architecture (manual WS-gateway e2e, merging the compute-node PRs, kicking off the Rust port). The strategic pivot folds compute into the backend and archives the node, so the *current* immediate actions are in §9.2 / §9.3, not here.
+
 Phase 1 + **all** of Phase 2 (2.1a / 2.1b / 2.2 / 2.3 / 2.4 except headless-Linux fallback / 2.5) + §7.1 / §7.4 are **code-complete and test-covered**.
 
 Open PRs (stacked on existing branches, not yet merged):
@@ -326,3 +330,53 @@ Phase 3 (Rust) status — branch `ws-gateway-phase2-progress`, stacked on `vivek
 - Next Rust slices: native molecule→Hamiltonian lowering (integrals + Jordan-Wigner) so `VqeSolver` no longer needs a pre-mapped `extra["hamiltonian"]`; surface live `gradient_norm` from L-BFGS into `ProgressPayload` (needs an optimizer→callback channel); then PhysicsVQE/HardwareVQE ports.
 
 Phase 5 (frontend) status — **planned, not started**. Highest-leverage first slices: §5.1 design-token + primitive extraction (unblocks everything), then §5.2 live monitoring cockpit (consumes the Progress events the gateway now emits). §5.5 LLM-runtime location is the open decision to make before building the copilot.
+
+> **Superseded by §9 (2026-06).** The actions above (manual e2e of the WS gateway, merging the three compute-node PRs, the Phase 3 Rust port) reflect the *external-node* architecture. The 2026-06 pivot folds compute INTO the kanad-app backend and ARCHIVES `kanad-compute`. Read §9 for the current direction; treat the items here as historical unless explicitly re-adopted.
+
+---
+
+## 9. Strategic pivot (2026-06): compute moves into the backend
+
+**Decision.** `kanad-compute` — the external CLI compute node AND the cloud-side WebSocket gateway that fed it — will be **ARCHIVED**. Compute is being folded **INTO the `kanad-app` FastAPI backend** so users run jobs directly from the browser: no CLI to install, no local node to keep connected, no persistent outbound WS. The browser submits a calculation, the backend executes it in-process, and live progress streams back over the existing `/ws/jobs/{id}` socket.
+
+**What this reverses (read this before trusting §0–§8).**
+- The §0 "north star" — two repos, solvers + vault + credentials living in a user-controlled local binary, "**never stored in cloud DB**" — is **no longer the target**. Solvers run in the cloud backend again.
+- Phase 1/2's core premise (persistent outbound WS from an external node; credentials resolved from a *local* OS-keyring vault; the cloud carrying NO backend credentials at rest) is **reversed**. The compute node, its protocol, its outbox, its device-auth, and its vault are all on the chopping block as the node goes away.
+- **Credentials model is now an OPEN USER DECISION** `[!]`. With compute in the cloud, quantum-backend credentials (IBM / IonQ / BlueQubit) must live *somewhere the cloud can reach at run time*. Options on the table, none chosen yet:
+  - **(a)** server-side credentials (User DB / env), resolved at dispatch — simplest, but the cloud holds secrets (the exact thing Phase 1/2 set out to avoid).
+  - **(b)** browser-held credentials injected per-request (localStorage / per-session), backend never persists them.
+  - **(c)** a short-lived delegated-access flow (e.g. OAuth device-code minting a temporary cloud token) for the rare cloud-backend job, with classical/statevector jobs needing no external creds at all.
+  This decision gates how much of the §2.3 device-auth / §2.4 vault work survives.
+
+### 9.1 Already shipped in `kanad-app` this session (live progress over `/ws/jobs/{id}`)
+- [x] `api/websocket/manager.py` — `ConnectionManager` gained `set_loop(loop)` + `dispatch(coro)`. `dispatch` schedules a broadcast coroutine safely from any thread: `run_coroutine_threadsafe` when off the loop, `create_task` when on it, drop+log if no loop is set.
+- [x] `api/main.py` lifespan captures the running loop via `connection_manager.set_loop(asyncio.get_running_loop())`.
+- [x] `api/routes/calculations.py` — the nested `add_event()` in `run_calculation` now ALSO pushes each phase live as a `{"type":"log","data":{"level","message"}}` frame via `connection_manager.dispatch(connection_manager.send_to_job(calc_id, frame))`. **Verified end-to-end: a LiH job streamed 7 live frames over `/ws/jobs/{id}`.**
+- [x] `api/workers/base_worker.py` switched to `connection_manager.dispatch` (note: the BaseWorker/VQEWorker path is currently NOT wired into any route — effectively dormant; see §9.4 retire list).
+- Frontend contract reminder: `web/src/components/molecular/ExperimentMonitor.tsx` consumes the **enveloped** `{type, data}` shape — types `progress` (data.iteration/energy/message?), `log` (data.level/message), `complete` (data=result), `error` (data.message) — and ALWAYS keeps a 2 s HTTP poll as a backstop, so live frames are an enhancement, never the sole source of truth. The legacy `connection_manager.broadcast_*` helpers emit a different flat shape the monitor does NOT consume — always emit via `send_to_job`.
+
+### 9.2 Landed this session (per-iteration progress, cancellation, fan-out seam)
+- [~] **Per-iteration progress curve.** `run_calculation` now has `_wrap_solve_with_progress(solver)` (called from both `track_solver` helpers). It inspects the solver's `solve` signature and, only when a `callback` kwarg is accepted (VQESolver / SQDSolver — PhysicsVQE is signature-gated out and runs unchanged), wraps `solve` to inject a `_progress_callback(iteration, energy, *rest)` that emits `{"type":"progress","data":{"iteration","energy"}}` via `connection_manager.dispatch(connection_manager.send_to_job(calc_id, frame))`. **Compiles + imports; not yet observed firing** — a tiny H2/VQE run converges in ~2 evals and doesn't exercise the optimizer callback loop, so live-curve verification on a longer run is still owed.
+- [x] **Cancellation coverage.** `_progress_callback` also checks `_cancel_requests` and raises `CalculationCancelled`, so a running in-process VQE/SQD job halts at the next iteration (in addition to the existing `_apply_cancellation_check` wrapper). `POST /api/calculations/{id}/cancel` already populates `_cancel_requests` (and discards on terminal states). Note (low-sev): kanad-core's VQESolver only re-raises a cancellation if the exception message contains "cancelled" — the message is kept compatible, but the coupling is fragile and should move to an exception-type check.
+- [x] **Fan-out seam.** Built directly into `ConnectionManager` (not a separate `event_bus` module): `init_redis(redis_url)` / `close_redis()` + a `_redis_relay_loop` that `PSUBSCRIBE`s `calc_updates:*` and relays frames from other processes to local WS clients; `send_to_job` also `PUBLISH`es when active. `api/config.py` gained `redis_url` (default `None`), and `api/main.py` lifespan calls `init_redis(settings.redis_url)` on startup + `close_redis()` on shutdown. **Pure no-op today** (redis not installed, no url) — zero behaviour change until `REDIS_URL` is set with `redis` present.
+
+### 9.3 Remaining browser-direct backend items (grounded in the audit)
+- [ ] **Multi-process fan-out via Redis** `[!]` (audit: high). `ConnectionManager.active_connections` and the in-memory `calculations_db` dict are **process-local**. With `WEB_CONCURRENCY > 1`, a browser whose WS lands on Worker-B never sees frames from a job running on Worker-A → 100% live-frame loss (HTTP polling masks it). Fix: a `RedisOptionalEventBus` — defaults to in-process `connection_manager.dispatch`; when `REDIS_URL` is set + `redis` installed, ALSO `PUBLISH calc_updates:{calc_id}` and run a lifespan `SUBSCRIBE`-and-relay task that fans received frames through `send_to_job`. Add optional `redis_url` to `api/config.py` (default `None` = current single-worker behaviour). Redis/Celery are NOT installed today and there is no `redis_url` in config — this is greenfield.
+- [ ] **Execution scaling beyond `BackgroundTasks`** `[!]` (audit: high). `submit_calculation` does `background_tasks.add_task(run_calculation, calc_id)` onto a shared threadpool with no concurrency gate; `config.max_concurrent_jobs=5` is never checked. CPU-bound solvers (1–3600 s each) can starve the pool. Add a semaphore guard + 503 rejection when full; longer term consider a proper queue/worker model now that compute lives in the cloud.
+- [ ] **Per-job timeouts** `[!]` (audit: high). `config.job_timeout_seconds=3600` exists but is never enforced — a hung PySCF/FCI solver blocks a threadpool thread forever. Wrap execution with a wall-clock timeout that marks the Job FAILED and releases the thread.
+- [ ] **Resource guards** (audit: high). Today only statevector >16 qubits is hard-blocked. Add FCI-complexity heuristics (e.g. reject large neutral molecules headed for the FCI fallback) and a soft RAM check (`psutil.virtual_memory()`) before launching a solver.
+- [ ] **Durable mid-run job state** (audit: medium). Live convergence lives only in the process-local `calculations_db`; SQLite is written only at completion via `_persist_calc_to_db()`. A crash loses convergence history. Optionally back live state with a shared store (Redis hash w/ TTL, or periodic DB writes) so GET reads shared state instead of a per-process dict.
+- [ ] **PhysicsVQE per-iteration curve is BLOCKED by kanad-core** `[!]` (audit: medium). `PhysicsVQE.solve()` has NO `callback` parameter (only `max_iterations`/`verbose`/`method`); its internal `_compute_energy` is driven by `scipy.optimize.minimize` with no user hook. Streaming a live energy curve from PhysicsVQE needs a kanad-core change (add `callback` and invoke it inside `_compute_energy`/`_optimize_sequential`). VQESolver (callback ✅) and SQDSolver (callback ✅) are unblocked; document this solver capability matrix in the UI so PhysicsVQE shows poll-only.
+
+### 9.4 Legacy compute-node code to retire (post-pivot)
+Once browser-direct execution is the only path, delete (in `kanad-app`):
+- [ ] `api/routes/compute_ws.py` — the WS gateway + process-local `NODE_REGISTRY`.
+- [ ] `api/routes/_compute_dispatch.py` — `_build_experiment_request` / `_try_ws_dispatch` and the WS-first dispatch branch in `submit_calculation`.
+- [ ] `api/routes/device_auth.py` — RFC 8628 device-authorization routes (only needed to mint node JWTs).
+- [ ] `api/routes/compute.py` — the polling endpoints (`GET /api/compute/jobs`, `POST /api/compute/jobs/{id}/result`, `POST /api/compute/register`, `POST /api/compute/heartbeat`).
+- [ ] `api/protocol.py` — the compute↔app WS wire format (imported only by the two modules above).
+- [ ] `api/workers/` — `base_worker.py` / `vqe_worker.py` / `md_worker.py` / `reaction_worker.py` / `celery_app.py` (Celery+Redis configured but never instantiated; `BaseWorker`/`VQEWorker` dormant and would emit the wrong flat broadcast shape if resurrected). Also delete the legacy `broadcast_*` helpers on `ConnectionManager` once no callsite uses them.
+- [ ] `User.kanad_compute_key` column + any plaintext credential columns, after the §9 credentials decision lands.
+- [ ] **This entire repo (`kanad-compute`):** the Python node (`kanad_compute/`, `remote_worker.py`) and the Rust workspace (`rust/`) get archived. Phase 3's native VQE/L-BFGS work is preserved in git history for a possible future in-process Rust acceleration of the backend, but is NOT on the critical path.
+
+> Sequence the deletes AFTER the browser-direct path (§9.2 + §9.3) is proven end-to-end, and keep the polling/WS paths alive until no client depends on them.
