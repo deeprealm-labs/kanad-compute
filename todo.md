@@ -79,9 +79,9 @@ Goal: kill the 2-second `/api/compute/jobs` polling loop in `remote_worker.py`. 
 - [ ] **Manual end-to-end** per `kanad-app/docs/compute_ws_smoke.md` — needs a running Postgres + a real molecule; not yet executed by this session
 
 ### 1.5 Graceful coexistence with old polling path
-- [ ] Keep `/api/compute/jobs` polling endpoints alive throughout Phase 1 — old `remote_worker.py` must still function for users on stale `kanad-compute` versions
-- [ ] Add deprecation log in the polling handlers
-- [ ] Decide cutoff version: drop polling N minor releases after WS lands
+- [ ] Keep `/api/compute/jobs` polling endpoints alive throughout Phase 1 — old `remote_worker.py` must still function for users on stale `kanad-compute` versions (server-side, kanad-app)
+- [x] Add deprecation log in the polling handlers — compute-side `remote_worker.start_worker` now emits a one-shot `logger.warning` pointing users to `kanad-compute login && connect`. (Server-side handler log belongs in kanad-app.)
+- [x] **Decide cutoff version (decided 2026-05): drop the polling path 2 minor releases after the WS gateway ships as default.** i.e. WS-default in `x.(y)`, polling removed in `x.(y+2)`. Recorded here as the binding cutoff.
 
 ---
 
@@ -142,7 +142,7 @@ Goal: kill the 2-second `/api/compute/jobs` polling loop in `remote_worker.py`. 
 - [x] Build: `cargo check --workspace` clean; MSRV bumped to 1.85 (clap 4.6 + edition2024 floor — 1.75 in the original plan was no longer reachable from current crates.io)
 - [x] `cargo test --workspace` — 24 tests passing (7 protocol + 6 vault + 3 auth + 8 gateway)
 - [x] `cargo clippy --workspace --all-targets -- -D warnings` — clean
-- [ ] CI: GitHub Actions workflow running the above on each push, plus cross-compile matrix for macOS arm64/x86_64, Linux x86_64/aarch64, Windows x86_64 (deferred to 3.2)
+- [x] CI: GitHub Actions workflow running the above on each push, plus cross-compile matrix for macOS arm64/x86_64, Linux x86_64/aarch64, Windows x86_64 — `.github/workflows/rust-ci.yml` runs `fmt --check` + `clippy -D warnings` + `test --workspace` (MSRV 1.85, path-filtered to `rust/**`), then a 5-target release cross-build matrix. Workspace formatted clean; clippy + 56 tests verified green locally post-format.
 
 ### 3.2 Native crates first (no solver math yet)
 - [x] `protocol` — Serde mirror of `kanad_compute/protocol.py`. Tagged-enum `ServerMessage` / `ClientMessage`, `deny_unknown_fields` on every struct, custom (de)serialize for `ExperimentEvent` so `kind` + `payload` stay synchronized by construction. Round-trip + reject-unknown-field tests cover Hello, ExperimentEvent (Progress), ExperimentRequest, and Ack.
@@ -276,7 +276,7 @@ What's **not** done, and why it can't be finished frontend-only:
 - [ ] Rate-limit `compute_connect` per user, per IP
 
 ### 6.5 Docs
-- [ ] User-facing README in `kanad-compute`: install, login, connect, creds
+- [x] User-facing README in `kanad-compute`: install, login, connect, creds — rewritten to lead with the WS gateway flow (`init` → `login` → `connect`), document the `creds` vault subgroup + device-auth, an architecture diagram, and mark the old `start`/`key` polling worker deprecated. (was: only the obsolete init/start/key polling flow)
 - [ ] Architecture doc in `kanad-app`: cloud responsibilities, compute responsibilities, where the line is
 - [ ] Migration guide for users on the old polling worker
 
@@ -285,8 +285,8 @@ What's **not** done, and why it can't be finished frontend-only:
 ## 7. Decisions still open
 
 - [x] **Multi-node per user (decided 2026-05).** "Bump previous session." When a new connection arrives for a user with an existing session, the old WS is closed (1001 GOING_AWAY, reason=`superseded`) and replaced. Rationale: reconnect after a network blip arrives BEFORE the dead session's heartbeat times out (~30 s), so rejecting the new connection would force the user to wait through that window. Matches `gh auth login` / `claude login` conventions. Multi-device support proper arrives with device-token auth (2.3).
-- [!] **Browser Path A (direct localhost) vs Path B (proxy).** Path A needs CORS + self-signed-cert UX or a localhost-trusted-origin trick; Path B is a non-decision (works today). Default: ship Path B in Phase 1, evaluate Path A demand.
-- [!] **Where do TUI logs come from?** Same outbox table read by gateway, or a separate `logs` ring buffer? Decide before starting 3.4.
+- [x] **Browser Path A (direct localhost) vs Path B (proxy) (decided 2026-05).** Ship **Path B (proxy through the cloud)** as the default — it works today with zero extra UX. Path A (direct browser→localhost) is **deferred** until there's real demand, because it needs CORS + a self-signed-cert/trusted-localhost-origin story that isn't worth the UX cost yet. Re-evaluate if a privacy-sensitive user wants results never to transit the cloud.
+- [x] **Where do TUI logs come from? (decided 2026-05).** The TUI **reads the existing outbox table** (`rust/crates/gateway/src/outbox.rs` / `kanad_compute/outbox.py`) rather than maintaining a separate `logs` ring buffer. Rationale: the outbox already durably holds every emitted event (Log/Progress/…/terminal) keyed by `(experiment_id, seq)`, so the TUI is a read-only view over it — no second source of truth, no extra memory, survives restarts. This unblocks §3.4.
 - [x] **Solver versioning (decided 2026-05).** `kanad_core_version` is now sent in `Hello` and surfaced in `/api/admin/compute_status`. Logged on connect. Server-side refusal of incompatible jobs is deferred until a real version-skew incident; today's failure mode (mismatched fields) surfaces clearly via solver TypeError on dispatch.
 
 ---

@@ -59,7 +59,11 @@ pub struct ClientConfig {
 }
 
 impl ClientConfig {
-    pub fn new(kanad_url: impl Into<String>, api_key: impl Into<String>, node_id: impl Into<String>) -> Self {
+    pub fn new(
+        kanad_url: impl Into<String>,
+        api_key: impl Into<String>,
+        node_id: impl Into<String>,
+    ) -> Self {
         Self {
             kanad_url: kanad_url.into().trim_end_matches('/').to_string(),
             api_key: api_key.into(),
@@ -107,7 +111,9 @@ impl GatewayClient {
         std::fs::create_dir_all(&config.state_dir)
             .with_context(|| format!("create state dir {}", config.state_dir.display()))?;
         let outbox = Arc::new(Outbox::open(config.state_dir.join("outbox.db"))?);
-        let seq_state = Arc::new(SeqState::open(crate::seq_state::path_in(&config.state_dir))?);
+        let seq_state = Arc::new(SeqState::open(crate::seq_state::path_in(
+            &config.state_dir,
+        ))?);
         // Opportunistic 24h cleanup at startup.
         let _ = outbox.gc(crate::outbox::GC_DEFAULT_AGE);
         Ok(Self {
@@ -213,8 +219,7 @@ impl GatewayClient {
                     tick.tick().await;
                     let last = last_pong.load(Ordering::Relaxed);
                     let now = now_ms();
-                    let deadline = PING_INTERVAL.as_millis() as i64
-                        * PONG_GRACE_MULTIPLIER as i64;
+                    let deadline = PING_INTERVAL.as_millis() as i64 * PONG_GRACE_MULTIPLIER as i64;
                     if last > 0 && (now - last) > deadline {
                         tracing::warn!(
                             stale_ms = now - last,
@@ -222,9 +227,8 @@ impl GatewayClient {
                         );
                         return;
                     }
-                    let ping = kanad_protocol::ClientMessage::Ping(kanad_protocol::Ping {
-                        ts_ms: now,
-                    });
+                    let ping =
+                        kanad_protocol::ClientMessage::Ping(kanad_protocol::Ping { ts_ms: now });
                     let frame = match serde_json::to_string(&ping) {
                         Ok(s) => s,
                         Err(_) => return,
@@ -584,4 +588,3 @@ pub fn default_factory() -> SolverFactory {
         }
     })
 }
-

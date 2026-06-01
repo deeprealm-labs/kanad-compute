@@ -129,20 +129,22 @@ mod tests {
         // Exact ground state ≈ -1.857 Ha.
         let h = PauliSum::new(vec![
             from_label("II", -1.0523732),
-            from_label("IZ",  0.39793742),
+            from_label("IZ", 0.39793742),
             from_label("ZI", -0.39793742),
             from_label("ZZ", -0.01128010),
-            from_label("XX",  0.18093119),
-            from_label("YY",  0.18093119),
+            from_label("XX", 0.18093119),
+            from_label("YY", 0.18093119),
         ]);
         let ansatz = HardwareEfficientAnsatz::new(2, 3);
         let cfg = VqeConfig {
             max_iters: 3000,
             ftol: 1e-8,
             // Small random-ish seed to break symmetries.
-            initial_params: Some((0..ansatz.parameter_count())
-                .map(|i| 0.1 * (i as f64).sin())
-                .collect()),
+            initial_params: Some(
+                (0..ansatz.parameter_count())
+                    .map(|i| 0.1 * (i as f64).sin())
+                    .collect(),
+            ),
         };
         let mut cb = NoCallback;
         let r = vqe(&h, &ansatz, &cfg, &mut cb);

@@ -21,7 +21,20 @@ HEARTBEAT_INTERVAL = 30  # seconds
 
 
 def start_worker(kanad_url: str, config: dict):
-    """Main worker loop — runs in a background thread."""
+    """Main worker loop — runs in a background thread.
+
+    DEPRECATED: this 2-second HTTP polling worker is superseded by the
+    persistent WebSocket gateway (`kanad-compute connect`), which pushes
+    experiments down a single outbound connection and streams live progress
+    back. The polling path is kept only for backward compatibility with stale
+    cloud deployments and will be dropped a few minor releases after the WS
+    gateway is the default. Prefer `kanad-compute login && kanad-compute connect`.
+    """
+    logger.warning(
+        "remote_worker (HTTP polling) is deprecated — migrate to the WebSocket "
+        "gateway: `kanad-compute login` then `kanad-compute connect`. The polling "
+        "path will be removed in a future release."
+    )
     api_key = config.get("api_key", "")
     node_id = config.get("node_id", "unknown")
     headers = {

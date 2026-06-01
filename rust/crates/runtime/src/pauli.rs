@@ -78,7 +78,11 @@ impl PauliString {
         for j in 0..len {
             let i = j ^ flip_mask;
             let sign_parity = ((j & sign_mask) as u32).count_ones() & 1;
-            let phase = if sign_parity == 1 { -i_pow_ny } else { i_pow_ny };
+            let phase = if sign_parity == 1 {
+                -i_pow_ny
+            } else {
+                i_pow_ny
+            };
             acc += amps[i].conj() * phase * amps[j];
         }
         // For a Hermitian operator the imaginary part must vanish numerically.
@@ -170,21 +174,48 @@ mod tests {
     #[test]
     fn zz_on_bell_state_is_one() {
         // (|00⟩+|11⟩)/√2 → ⟨ZZ⟩ = 1.
-        let sv = run_circuit(2, &[Op::H(0), Op::Cnot { control: 0, target: 1 }]);
+        let sv = run_circuit(
+            2,
+            &[
+                Op::H(0),
+                Op::Cnot {
+                    control: 0,
+                    target: 1,
+                },
+            ],
+        );
         let zz = from_label("ZZ", 1.0);
         assert_abs_diff_eq!(zz.expectation(&sv), 1.0, epsilon = 1e-12);
     }
 
     #[test]
     fn xx_on_bell_state_is_one() {
-        let sv = run_circuit(2, &[Op::H(0), Op::Cnot { control: 0, target: 1 }]);
+        let sv = run_circuit(
+            2,
+            &[
+                Op::H(0),
+                Op::Cnot {
+                    control: 0,
+                    target: 1,
+                },
+            ],
+        );
         let xx = from_label("XX", 1.0);
         assert_abs_diff_eq!(xx.expectation(&sv), 1.0, epsilon = 1e-12);
     }
 
     #[test]
     fn yy_on_bell_state_is_minus_one() {
-        let sv = run_circuit(2, &[Op::H(0), Op::Cnot { control: 0, target: 1 }]);
+        let sv = run_circuit(
+            2,
+            &[
+                Op::H(0),
+                Op::Cnot {
+                    control: 0,
+                    target: 1,
+                },
+            ],
+        );
         let yy = from_label("YY", 1.0);
         assert_abs_diff_eq!(yy.expectation(&sv), -1.0, epsilon = 1e-12);
     }
@@ -197,10 +228,10 @@ mod tests {
         // a real finite number on a reference computational-basis state.
         let h = PauliSum::new(vec![
             from_label("II", -1.0523732),
-            from_label("IZ",  0.39793742),
+            from_label("IZ", 0.39793742),
             from_label("ZI", -0.39793742),
             from_label("ZZ", -0.01128010),
-            from_label("XX",  0.18093119),
+            from_label("XX", 0.18093119),
         ]);
         let hf = run_circuit(2, &[Op::X(0)]); // |01⟩
         let e_hf = h.expectation(&hf);

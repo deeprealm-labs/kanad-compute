@@ -51,14 +51,16 @@ pub struct KeyringBackend;
 
 impl Backend for KeyringBackend {
     fn set(&self, service: &str, key: &str, value: &str) -> Result<(), VaultError> {
-        let entry = keyring::Entry::new(service, key).map_err(|e| VaultError::Backend(e.to_string()))?;
+        let entry =
+            keyring::Entry::new(service, key).map_err(|e| VaultError::Backend(e.to_string()))?;
         entry
             .set_password(value)
             .map_err(|e| VaultError::Backend(e.to_string()))
     }
 
     fn get(&self, service: &str, key: &str) -> Result<Option<String>, VaultError> {
-        let entry = keyring::Entry::new(service, key).map_err(|e| VaultError::Backend(e.to_string()))?;
+        let entry =
+            keyring::Entry::new(service, key).map_err(|e| VaultError::Backend(e.to_string()))?;
         match entry.get_password() {
             Ok(s) => Ok(Some(s)),
             Err(keyring::Error::NoEntry) => Ok(None),
@@ -70,7 +72,8 @@ impl Backend for KeyringBackend {
     }
 
     fn clear(&self, service: &str, key: &str) -> Result<bool, VaultError> {
-        let entry = keyring::Entry::new(service, key).map_err(|e| VaultError::Backend(e.to_string()))?;
+        let entry =
+            keyring::Entry::new(service, key).map_err(|e| VaultError::Backend(e.to_string()))?;
         match entry.delete_credential() {
             Ok(()) => Ok(true),
             Err(keyring::Error::NoEntry) => Ok(false),
@@ -97,7 +100,11 @@ impl Backend for MemoryBackend {
         Ok(self.0.lock().get(&(service.into(), key.into())).cloned())
     }
     fn clear(&self, service: &str, key: &str) -> Result<bool, VaultError> {
-        Ok(self.0.lock().remove(&(service.into(), key.into())).is_some())
+        Ok(self
+            .0
+            .lock()
+            .remove(&(service.into(), key.into()))
+            .is_some())
     }
 }
 
@@ -149,7 +156,11 @@ impl Vault {
     }
 
     pub fn list_present(&self) -> Vec<&'static str> {
-        CANONICAL_KEYS.iter().copied().filter(|k| self.has(k)).collect()
+        CANONICAL_KEYS
+            .iter()
+            .copied()
+            .filter(|k| self.has(k))
+            .collect()
     }
 
     /// Snapshot every canonical key. Values are full secrets — only use
@@ -184,10 +195,7 @@ mod tests {
     #[test]
     fn unknown_key_rejected() {
         let v = mem_vault();
-        assert!(matches!(
-            v.set("nope", "x"),
-            Err(VaultError::UnknownKey(_))
-        ));
+        assert!(matches!(v.set("nope", "x"), Err(VaultError::UnknownKey(_))));
     }
 
     #[test]

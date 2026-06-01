@@ -88,8 +88,8 @@ async fn handshake_dispatch_ack_roundtrip() {
             backend_credentials: None,
             deadline_ms: 600_000,
         };
-        let req_frame = serde_json::to_string(&ServerMessage::ExperimentRequest(Box::new(req)))
-            .unwrap();
+        let req_frame =
+            serde_json::to_string(&ServerMessage::ExperimentRequest(Box::new(req))).unwrap();
         ws.send(Message::Text(req_frame)).await.unwrap();
 
         // 4) Collect events until we see the Error frame.
@@ -173,10 +173,17 @@ async fn handshake_dispatch_ack_roundtrip() {
     // Outbox should be empty after the Ack trim.
     let state_db = state.path().join("outbox.db");
     let ob = kanad_gateway::Outbox::open(&state_db).unwrap();
-    assert_eq!(ob.pending_count().unwrap(), 0, "outbox should be empty after Ack");
+    assert_eq!(
+        ob.pending_count().unwrap(),
+        0,
+        "outbox should be empty after Ack"
+    );
 
     // seq.json should record the last ack.
     let seq_file = state.path().join("seq.json");
     let text = std::fs::read_to_string(&seq_file).expect("seq.json written");
-    assert!(text.contains("exp-1"), "seq.json must contain experiment_id");
+    assert!(
+        text.contains("exp-1"),
+        "seq.json must contain experiment_id"
+    );
 }

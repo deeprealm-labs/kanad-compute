@@ -150,9 +150,8 @@ impl DeviceFlow {
             let bytes = resp.bytes().await?;
 
             if status.is_success() {
-                let ok: TokenSuccess = serde_json::from_slice(&bytes).map_err(|e| {
-                    AuthError::Unexpected(format!("decode token success: {e}"))
-                })?;
+                let ok: TokenSuccess = serde_json::from_slice(&bytes)
+                    .map_err(|e| AuthError::Unexpected(format!("decode token success: {e}")))?;
                 return Ok(AccessToken {
                     access_token: ok.access_token,
                     token_type: ok.token_type,

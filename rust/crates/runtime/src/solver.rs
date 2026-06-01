@@ -15,9 +15,7 @@ use crate::pauli::{from_label, PauliSum};
 use crate::statevector::run_circuit;
 use crate::vqe::{vqe, VqeCallback, VqeConfig};
 use crate::{CancelToken, ProgressSink, Solver, SolverError};
-use kanad_protocol::{
-    ExperimentRequest, FinalResultPayload, ProgressPayload, SolverSpec,
-};
+use kanad_protocol::{ExperimentRequest, FinalResultPayload, ProgressPayload, SolverSpec};
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -48,19 +46,14 @@ impl Solver for VqeSolver {
             .map(|t| t.n_qubits())
             .ok_or_else(|| SolverError::Failed("hamiltonian has no terms".into()))?;
 
-        let n_layers = request
-            .solver
-            .n_layers
-            .filter(|&l| l >= 1)
-            .unwrap_or(2) as usize;
+        let n_layers = request.solver.n_layers.filter(|&l| l >= 1).unwrap_or(2) as usize;
         let ansatz = HardwareEfficientAnsatz::new(n_qubits, n_layers);
 
         // Deterministic non-zero seed: all-zeros is a saddle point for HEA,
         // so a small structured perturbation breaks the symmetry without
         // introducing run-to-run nondeterminism.
         let n_params = ansatz.parameter_count();
-        let initial_params: Vec<f64> =
-            (0..n_params).map(|i| 0.1 * (i as f64).sin()).collect();
+        let initial_params: Vec<f64> = (0..n_params).map(|i| 0.1 * (i as f64).sin()).collect();
 
         let cfg = VqeConfig {
             max_iters: request.solver.max_iterations.max(1) as usize,

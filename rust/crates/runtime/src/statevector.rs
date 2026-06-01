@@ -200,8 +200,12 @@ impl Op {
             Op::Rx(q, t) => sv.apply_1q(&gates::rx(t), q),
             Op::Ry(q, t) => sv.apply_1q(&gates::ry(t), q),
             Op::Rz(q, t) => sv.apply_1q(&gates::rz(t), q),
-            Op::Cnot { control, target } => sv.apply_controlled_1q(&gates::pauli_x(), control, target),
-            Op::Cz { control, target } => sv.apply_controlled_1q(&gates::pauli_z(), control, target),
+            Op::Cnot { control, target } => {
+                sv.apply_controlled_1q(&gates::pauli_x(), control, target)
+            }
+            Op::Cz { control, target } => {
+                sv.apply_controlled_1q(&gates::pauli_z(), control, target)
+            }
             Op::Swap(a, b) => sv.apply_swap(a, b),
         }
     }
@@ -264,7 +268,13 @@ mod tests {
         // |00⟩ -H_0-> (|00⟩+|10⟩)/√2 -CNOT(0,1)-> (|00⟩+|11⟩)/√2
         let sv = run_circuit(
             2,
-            &[Op::H(0), Op::Cnot { control: 0, target: 1 }],
+            &[
+                Op::H(0),
+                Op::Cnot {
+                    control: 0,
+                    target: 1,
+                },
+            ],
         );
         let h = FRAC_1_SQRT_2;
         close(sv.amps()[0], C::new(h, 0.0)); // |00⟩
@@ -291,9 +301,15 @@ mod tests {
             &[
                 Op::H(0),
                 Op::Ry(1, 0.7),
-                Op::Cnot { control: 0, target: 2 },
+                Op::Cnot {
+                    control: 0,
+                    target: 2,
+                },
                 Op::Rz(3, -1.3),
-                Op::Cz { control: 1, target: 3 },
+                Op::Cz {
+                    control: 1,
+                    target: 3,
+                },
                 Op::Rx(2, 0.4),
                 Op::Swap(0, 3),
             ],

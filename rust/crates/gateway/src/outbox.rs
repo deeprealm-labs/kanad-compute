@@ -140,10 +140,7 @@ impl Outbox {
     pub fn gc(&self, older_than: Duration) -> Result<usize, OutboxError> {
         let cutoff = (Utc::now().timestamp_millis() as f64 / 1000.0) - older_than.as_secs_f64();
         let conn = self.conn.lock();
-        let n = conn.execute(
-            "DELETE FROM events WHERE created_at < ?1",
-            params![cutoff],
-        )?;
+        let n = conn.execute("DELETE FROM events WHERE created_at < ?1", params![cutoff])?;
         if n > 0 {
             tracing::info!(removed = n, ?older_than, "outbox.gc");
         }

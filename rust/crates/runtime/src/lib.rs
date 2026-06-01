@@ -5,12 +5,12 @@
 //! drive. The `Solver` trait + `ProgressSink` + `CancelToken` shape was
 //! locked in by Phase 3.2.
 
-pub mod statevector;
-pub mod pauli;
 pub mod ansatz;
 pub mod optim;
-pub mod vqe;
+pub mod pauli;
 pub mod solver;
+pub mod statevector;
+pub mod vqe;
 
 pub use solver::VqeSolver;
 

@@ -55,7 +55,10 @@ impl Ansatz for HardwareEfficientAnsatz {
             }
             if layer + 1 < self.n_layers && self.n_qubits > 1 {
                 for q in 0..self.n_qubits - 1 {
-                    ops.push(Op::Cnot { control: q, target: q + 1 });
+                    ops.push(Op::Cnot {
+                        control: q,
+                        target: q + 1,
+                    });
                 }
             }
         }

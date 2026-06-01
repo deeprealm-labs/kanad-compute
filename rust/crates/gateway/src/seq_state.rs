@@ -92,8 +92,8 @@ impl SeqState {
             .filter(|(_, b)| b.last_ack_seq > 0)
             .map(|(k, b)| (k.clone(), Value::from(b.last_ack_seq)))
             .collect();
-        let body = serde_json::to_string(&Value::Object(snapshot))
-            .map_err(std::io::Error::other)?;
+        let body =
+            serde_json::to_string(&Value::Object(snapshot)).map_err(std::io::Error::other)?;
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)?;
         }

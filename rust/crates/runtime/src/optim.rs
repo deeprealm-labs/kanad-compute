@@ -9,11 +9,7 @@
 
 pub trait Minimizer {
     /// Minimize `f` starting from `x0`. Returns `(x_min, f_min, n_iters)`.
-    fn minimize(
-        &self,
-        x0: Vec<f64>,
-        f: &mut dyn FnMut(&[f64]) -> f64,
-    ) -> (Vec<f64>, f64, usize);
+    fn minimize(&self, x0: Vec<f64>, f: &mut dyn FnMut(&[f64]) -> f64) -> (Vec<f64>, f64, usize);
 }
 
 /// Classical Nelder-Mead with the standard Nash 1990 parameters.
@@ -37,11 +33,7 @@ impl Default for NelderMead {
 }
 
 impl Minimizer for NelderMead {
-    fn minimize(
-        &self,
-        x0: Vec<f64>,
-        f: &mut dyn FnMut(&[f64]) -> f64,
-    ) -> (Vec<f64>, f64, usize) {
+    fn minimize(&self, x0: Vec<f64>, f: &mut dyn FnMut(&[f64]) -> f64) -> (Vec<f64>, f64, usize) {
         let n = x0.len();
         assert!(n >= 1);
 
@@ -112,7 +104,11 @@ impl Minimizer for NelderMead {
             } else {
                 // Contract.
                 let use_outside = f_reflected < fvals[worst];
-                let pivot = if use_outside { &reflected } else { &simplex[worst] };
+                let pivot = if use_outside {
+                    &reflected
+                } else {
+                    &simplex[worst]
+                };
                 let contracted: Vec<f64> = (0..n)
                     .map(|j| centroid[j] + rho * (pivot[j] - centroid[j]))
                     .collect();
@@ -133,7 +129,8 @@ impl Minimizer for NelderMead {
                             continue;
                         }
                         for j in 0..n {
-                            simplex[i][j] = best_vertex[j] + sigma * (simplex[i][j] - best_vertex[j]);
+                            simplex[i][j] =
+                                best_vertex[j] + sigma * (simplex[i][j] - best_vertex[j]);
                         }
                         fvals[i] = f(&simplex[i]);
                     }

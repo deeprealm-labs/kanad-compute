@@ -12,7 +12,11 @@ use std::io::{self, Write};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser, Debug)]
-#[command(name = "kanad-compute", version, about = "Local compute node for Kanad")]
+#[command(
+    name = "kanad-compute",
+    version,
+    about = "Local compute node for Kanad"
+)]
 struct Cli {
     /// Override the kanad-app base URL.
     #[arg(long, env = "KANAD_APP_URL", default_value = "https://app.kanad.dev")]
@@ -68,14 +72,19 @@ enum CredsAction {
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
         .init();
 
     let cli = Cli::parse();
     match cli.cmd {
         Cmd::Status => cmd_status().await,
         Cmd::Creds { action } => cmd_creds(action).await,
-        Cmd::Login { no_browser, timeout } => cmd_login(&cli.url, no_browser, timeout).await,
+        Cmd::Login {
+            no_browser,
+            timeout,
+        } => cmd_login(&cli.url, no_browser, timeout).await,
         Cmd::Connect { node_id } => cmd_connect(&cli.url, node_id).await,
         Cmd::Version => {
             println!("kanad-compute {}", env!("CARGO_PKG_VERSION"));
@@ -96,7 +105,10 @@ async fn cmd_status() -> Result<()> {
     let v = Vault::new();
     println!("Vault status:");
     for (logical, present) in v.status() {
-        println!("  {logical:<10}: {}", if present { "set" } else { "missing" });
+        println!(
+            "  {logical:<10}: {}",
+            if present { "set" } else { "missing" }
+        );
     }
     Ok(())
 }
@@ -162,7 +174,10 @@ async fn cmd_login(base_url: &str, no_browser: bool, timeout: u64) -> Result<()>
     let mut code = code;
     code.expires_in = expires_in;
 
-    let token = flow.poll_token(&code).await.context("device/token poll failed")?;
+    let token = flow
+        .poll_token(&code)
+        .await
+        .context("device/token poll failed")?;
     let v = Vault::new();
     v.set("kanad_access_token", &token.access_token)
         .context("vault set kanad_access_token failed")?;
@@ -172,18 +187,15 @@ async fn cmd_login(base_url: &str, no_browser: bool, timeout: u64) -> Result<()>
 
 async fn cmd_connect(base_url: &str, node_id_override: Option<String>) -> Result<()> {
     let v = Vault::new();
-    let token = v
-        .get("kanad_access_token")
-        .ok_or_else(|| anyhow::anyhow!(
-            "no access token in vault. Run `kanad-compute login` first."
-        ))?;
+    let token = v.get("kanad_access_token").ok_or_else(|| {
+        anyhow::anyhow!("no access token in vault. Run `kanad-compute login` first.")
+    })?;
     let node_id = node_id_override
         .or_else(|| std::env::var("KANAD_NODE_ID").ok())
         .unwrap_or_else(default_node_id);
 
     let cfg = ClientConfig::new(base_url, token, node_id);
-    let client = GatewayClient::new(cfg, default_factory())
-        .context("initialize gateway client")?;
+    let client = GatewayClient::new(cfg, default_factory()).context("initialize gateway client")?;
 
     tracing::info!(url = %client.config.ws_url(), node_id = %client.config.node_id,
         "kanad-compute connect: starting gateway");
@@ -200,11 +212,17 @@ fn default_node_id() -> String {
 fn open_browser(url: &str) -> std::io::Result<()> {
     #[cfg(target_os = "macos")]
     {
-        std::process::Command::new("open").arg(url).status().map(|_| ())
+        std::process::Command::new("open")
+            .arg(url)
+            .status()
+            .map(|_| ())
     }
     #[cfg(target_os = "linux")]
     {
-        std::process::Command::new("xdg-open").arg(url).status().map(|_| ())
+        std::process::Command::new("xdg-open")
+            .arg(url)
+            .status()
+            .map(|_| ())
     }
     #[cfg(target_os = "windows")]
     {
