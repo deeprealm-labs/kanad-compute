@@ -1,3 +1,9 @@
+> ⚠️ **ARCHIVED (2026-06).** This repo is no longer the live compute path.
+> Compute moved in-process into the **kanad-app** FastAPI backend and streams
+> over `/ws/jobs/{id}`; the external node (WS gateway, device-auth, polling,
+> workers, wire protocol) is retired. The code is preserved in git history for
+> possible future in-process acceleration. See [ARCHIVED.md](ARCHIVED.md).
+
 # kanad-compute
 
 Turn your computer into a quantum-chemistry compute node for [Kanad](https://kanad.xyz).
