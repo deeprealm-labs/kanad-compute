@@ -24,10 +24,12 @@ def main():
 @click.option("--port", default=7440, help="Server port (default: 7440)")
 @click.option("--max-qubits", default=20, help="Max qubits to accept (default: 20)")
 @click.option("--gpu/--no-gpu", default=False, help="Enable GPU acceleration")
+@click.option("--gpu-device", default="auto", type=click.Choice(["auto", "amd", "nvidia", "cpu"]),
+              help="GPU engine: amd (rocm-planck) | nvidia (cudaq) | cpu | auto")
 @click.option("--ibm-token", default=None, help="IBM Quantum API token")
 @click.option("--ionq-key", default=None, help="IonQ API key")
 @click.option("--ngrok-token", default=None, help="ngrok auth token for public tunnels")
-def init(port, max_qubits, gpu, ibm_token, ionq_key, ngrok_token):
+def init(port, max_qubits, gpu, gpu_device, ibm_token, ionq_key, ngrok_token):
     """Initialize Kanad Compute configuration."""
     from .config import init_config
 
@@ -35,7 +37,7 @@ def init(port, max_qubits, gpu, ibm_token, ionq_key, ngrok_token):
     console.print()
 
     cfg = init_config(
-        port=port, max_qubits=max_qubits, gpu=gpu,
+        port=port, max_qubits=max_qubits, gpu=gpu, gpu_device=gpu_device,
         ibm_token=ibm_token, ionq_key=ionq_key,
     )
     if ngrok_token:
@@ -77,89 +79,156 @@ def init(port, max_qubits, gpu, ibm_token, ionq_key, ngrok_token):
 
 
 @main.command()
-@click.option("--host", default=None, help="Override host (default: 0.0.0.0)")
+@click.option("--host", default=None, help="Override host (default from config: 127.0.0.1)")
 @click.option("--port", default=None, type=int, help="Override port")
-@click.option("--reload", is_flag=True, help="Enable auto-reload (development)")
-@click.option("--connect", default=None, help="Connect to Kanad platform (e.g. https://kanad-api-640826962316.us-central1.run.app or http://localhost:8000)")
-def start(host, port, reload, connect):
-    """Start the Kanad Compute server."""
-    from .config import load_config, save_config, CONFIG_FILE
+@click.option("--reload", is_flag=True, help="Auto-reload (development; implies server-only)")
+@click.option("--no-tui", is_flag=True, help="Server only, no live dashboard (headless/systemd)")
+def start(host, port, reload, no_tui):
+    """Start the Kanad Compute node. Shows a live dashboard in a terminal; runs
+    server-only when headless (--no-tui / no TTY). The node is reached by kanad-app
+    over SSH — it binds localhost, no public HTTP port."""
+    import sys
+    import threading
+    import time
+    from .config import load_config, CONFIG_FILE
 
     if not CONFIG_FILE.exists():
         console.print("[red]No config found. Run [bold]kanad-compute init[/bold] first.[/red]")
         raise SystemExit(1)
 
     cfg = load_config()
-    _host = host or cfg.get("host", "0.0.0.0")
+    _host = host or cfg.get("host", "127.0.0.1")
     _port = port or cfg.get("port", 7440)
-
-    console.print(BANNER)
-    console.print()
-
-    # System info
-    from .sysinfo import get_system_info
-    info = get_system_info(cfg.get("gpu_enabled", False))
-
-    table = Table(box=box.SIMPLE, show_header=False)
-    table.add_column(style="dim")
-    table.add_column(style="white")
-    table.add_row("CPU", f"{info['cpu_physical']} cores ({info['cpu_count']} threads)")
-    table.add_row("RAM", f"{info['ram_available_gb']} / {info['ram_total_gb']} GB")
-    if info.get("gpu_available"):
-        table.add_row("GPU", f"{info['gpu_name']} ({info['gpu_memory_gb']} GB)")
-    table.add_row("Max Qubits", str(cfg.get("max_qubits", 20)))
-    table.add_row("Node ID", cfg["node_id"][:12] + "...")
-
-    console.print(Panel(table, title="[bold]System[/bold]", border_style="blue"))
-    console.print(f"\n  Local:  [bold green]http://{_host}:{_port}[/bold green]")
-    console.print(f"  API Key: [dim]{cfg['api_key'][:16]}...[/dim]")
-
-    # Connect to Kanad platform (outbound — no port forwarding needed)
-    kanad_url = connect or cfg.get("kanad_url")
-    if kanad_url:
-        kanad_url = kanad_url.rstrip('/')
-        console.print(f"  Kanad:  [bold cyan]{kanad_url}[/bold cyan]")
-        console.print()
-        console.print(Panel(
-            f"[bold]Connected to Kanad platform[/bold]\n\n"
-            f"  [cyan]{kanad_url}[/cyan]\n\n"
-            f"[dim]Your computer will receive and run quantum chemistry jobs from kanad.xyz[/dim]\n"
-            f"[dim]No port forwarding or tunnels needed — your machine connects outbound.[/dim]",
-            title="[bold green]Worker Mode[/bold green]",
-            border_style="green",
-        ))
-        cfg["kanad_url"] = kanad_url
-        save_config(cfg)
-    else:
-        console.print()
-        console.print("  [dim]Local mode only. To connect to kanad.xyz:[/dim]")
-        console.print("  [dim]  kanad-compute start --connect https://kanad-api-640826962316.us-central1.run.app[/dim]")
-
-    console.print(f"\n  Press [bold]Ctrl+C[/bold] to stop.\n")
 
     import uvicorn
     from .server import create_app
-
     app = create_app(cfg)
     app.state.public_url = None
 
-    # Start worker thread if connected to Kanad
-    worker_thread = None
-    if kanad_url:
-        import threading
-        from .remote_worker import start_worker
-        worker_thread = threading.Thread(
-            target=start_worker,
-            args=(kanad_url, cfg),
-            daemon=True,
-        )
-        worker_thread.start()
+    # Headless / no terminal -> server only (blocking), no dashboard.
+    if no_tui or reload or not sys.stdout.isatty():
+        console.print(BANNER)
+        console.print(f"\n  Serving [bold green]http://{_host}:{_port}[/bold green]  ·  node {cfg['node_id'][:8]}  ·  gpu {cfg.get('gpu_device','auto')}")
+        console.print("  [dim]Reached by kanad-app over SSH. Ctrl+C to stop.[/dim]\n")
+        uvicorn.run(app, host=_host, port=_port,
+                    log_level=cfg.get("log_level", "info"), reload=reload)
+        return
 
-    uvicorn.run(
-        app, host=_host, port=_port,
-        log_level=cfg.get("log_level", "info"),
-        reload=reload,
-    )
+    # Interactive -> uvicorn in a daemon thread + live TUI in the main thread.
+    sconf = uvicorn.Config(app, host=_host, port=_port, log_level="critical")
+    server = uvicorn.Server(sconf)
+    server.install_signal_handlers = lambda: None   # not the main thread
+    threading.Thread(target=server.run, daemon=True).start()
+    for _ in range(100):
+        if getattr(server, "started", False):
+            break
+        time.sleep(0.05)
+    try:
+        _run_tui(cfg, _port)
+    finally:
+        server.should_exit = True
+        time.sleep(0.3)
+
+
+def _run_tui(cfg, port):
+    """Live node dashboard — polls the node's own local API (decoupled from the
+    server internals) and renders a rich.Live layout: connection/pairing, the
+    pushed login session, the compute engine, and jobs."""
+    import time
+    import getpass
+    import httpx
+    from rich.live import Live
+    from rich.layout import Layout
+    from rich.text import Text
+
+    base = f"http://127.0.0.1:{port}"
+    hdr = {"Authorization": f"Bearer {cfg['api_key']}"}
+    ip = _public_ip()
+    user = getpass.getuser()
+    try:
+        info0 = httpx.get(base + "/info", headers=hdr, timeout=4).json()   # static: poll once
+    except Exception:
+        info0 = {}
+
+    def _poll(path):
+        try:
+            return httpx.get(base + path, headers=hdr, timeout=3).json()
+        except Exception:
+            return None
+
+    def render():
+        sess = _poll("/session") or {}
+        jobs = _poll("/jobs") or []
+        paired = bool(sess.get("user_email") or sess.get("email"))
+
+        lay = Layout()
+        lay.split_column(Layout(name="header", size=3), Layout(name="body"), Layout(name="footer", size=3))
+        lay["body"].split_row(Layout(name="left"), Layout(name="right"))
+        lay["left"].split_column(Layout(name="conn"), Layout(name="session"))
+        lay["right"].split_column(Layout(name="compute"), Layout(name="jobs"))
+
+        lay["header"].update(Panel(Text("KANAD COMPUTE   ·   quantum chemistry node", justify="center", style="bold cyan"),
+                                   subtitle=f"node {cfg['node_id'][:8]} · [green]● serving[/green]"))
+
+        c = Table(box=box.SIMPLE, show_header=False); c.add_column(style="dim"); c.add_column(style="white")
+        c.add_row("Public IP", ip)
+        c.add_row("SSH", f"{user}@{ip}:22")
+        c.add_row("API key", cfg["api_key"][:18] + "…")
+        c.add_row("Pairing", "[green]✓ paired[/green]" if paired
+                  else "[yellow]⧗ waiting — run `kanad-compute authorize`, then add this node in the app[/yellow]")
+        lay["conn"].update(Panel(c, title="Connection", border_style="blue"))
+
+        if paired:
+            s = Table(box=box.SIMPLE, show_header=False); s.add_column(style="dim"); s.add_column(style="white")
+            s.add_row("User", str(sess.get("user_email") or sess.get("email")))
+            s.add_row("Plan", str(sess.get("plan") or "—"))
+            s.add_row("Compute runs", str(sess.get("runs", 0)))
+            exps = sess.get("experiments") or []
+            s.add_row("Experiments", str(len(exps)))
+            for e in exps[:6]:
+                en = e.get("energy")
+                ens = f"{en:.4f}" if isinstance(en, (int, float)) else ""
+                s.add_row("", f"[dim]{e.get('type') or '?'}  {e.get('status') or ''}  {ens}[/dim]")
+            sched = sess.get("scheduled") or []
+            if sched:
+                s.add_row("Scheduled", str(len(sched)))
+            lay["session"].update(Panel(s, title="Session", border_style="green"))
+        else:
+            lay["session"].update(Panel(
+                Text("Not paired yet.\n\nIn kanad-app → Backend Config → Add node,\nenter the IP / SSH user / API key shown left.\n\nThe app then pushes your login here.", style="dim"),
+                title="Session", border_style="grey50"))
+
+        m = Table(box=box.SIMPLE, show_header=False); m.add_column(style="dim"); m.add_column(style="white")
+        eng = info0.get("gpu_engine", "cpu")
+        m.add_row("Engine", f"[bold]{eng}[/bold]" + (f"  ({info0.get('gpu_name')})" if info0.get("gpu_name") else ""))
+        m.add_row("GPU vendor", info0.get("gpu_vendor") or "none")
+        m.add_row("Max qubits", str(info0.get("max_qubits", cfg.get("max_qubits", 20))))
+        m.add_row("CPU / RAM", f"{info0.get('cpu_physical', '?')}c · {info0.get('ram_total_gb', '?')} GB")
+        active = sum(1 for j in (jobs or []) if j.get("status") in ("pending", "running"))
+        m.add_row("Active jobs", f"{active} / {info0.get('max_workers', cfg.get('max_workers', 2))}")
+        lay["compute"].update(Panel(m, title="Compute", border_style="magenta"))
+
+        j = Table(box=box.SIMPLE); j.add_column("job", style="dim"); j.add_column("status")
+        for job in (jobs or [])[:8]:
+            st = job.get("status", "?")
+            color = ("green" if st == "completed" else "yellow" if st in ("running", "pending")
+                     else "red" if st in ("failed", "error", "cancelled") else "white")
+            j.add_row(str(job.get("job_id", ""))[:8], f"[{color}]{st}[/{color}]")
+        if not jobs:
+            j.add_row("[dim]—[/dim]", "[dim]no jobs yet[/dim]")
+        lay["jobs"].update(Panel(j, title="Jobs", border_style="cyan"))
+
+        lay["footer"].update(Panel(Text("Ctrl+C to stop   ·   reached by kanad-app over SSH (no public HTTP port)",
+                                        justify="center", style="dim")))
+        return lay
+
+    with Live(render(), console=console, refresh_per_second=4, screen=True) as live:
+        try:
+            while True:
+                time.sleep(2)
+                live.update(render())
+        except KeyboardInterrupt:
+            pass
 
 
 @main.command()
@@ -276,6 +345,106 @@ def configure(ibm_token, ionq_key, max_qubits, gpu, port):
         console.print(f"[green]Updated: {', '.join(changed)}[/green]")
     else:
         console.print("[dim]No changes. Use --help to see options.[/dim]")
+
+
+def _public_ip() -> str:
+    import httpx
+    for url in ("https://api.ipify.org", "https://ifconfig.me/ip", "https://icanhazip.com"):
+        try:
+            ip = httpx.get(url, timeout=5).text.strip()
+            if ip:
+                return ip
+        except Exception:
+            continue
+    return "<your-public-ip>"
+
+
+@main.command()
+def pair():
+    """Show the details to pair this node in kanad-app."""
+    from .config import load_config, CONFIG_FILE
+    import getpass
+
+    if not CONFIG_FILE.exists():
+        console.print("[red]Not initialized. Run [bold]kanad-compute init[/bold] first.[/red]")
+        raise SystemExit(1)
+
+    cfg = load_config()
+    console.print(BANNER)
+    console.print()
+    ip = _public_ip()
+    user = getpass.getuser()
+    console.print(Panel(
+        f"[bold]Pair in kanad-app → Profile → Backend Config → Compute Nodes → Add node[/bold]\n\n"
+        f"  SSH host      [bold white]{ip}[/bold white]\n"
+        f"  SSH port      [bold white]22[/bold white]\n"
+        f"  SSH user      [bold white]{user}[/bold white]\n"
+        f"  Node API key  [bold green]{cfg['api_key']}[/bold green]\n"
+        f"  Node API port [bold white]{cfg.get('port', 7440)}[/bold white]\n\n"
+        f"[dim]First run [bold]kanad-compute authorize[/bold] so kanad-app may connect over SSH,[/dim]\n"
+        f"[dim]then [bold]kanad-compute start[/bold] to keep the node online.[/dim]",
+        title="[bold cyan]Pairing details[/bold cyan]",
+        border_style="cyan",
+    ))
+
+
+@main.command()
+@click.option("--api-url", default=None, help="kanad-app API base (default: config kanad_api_url)")
+@click.option("--key", "pubkey", default=None, help="Authorize this explicit public key instead of fetching")
+def authorize(api_url, pubkey):
+    """Authorize kanad-app's SSH key so it can connect to this node.
+
+    Fetches kanad-app's platform public key and adds it to ~/.ssh/authorized_keys,
+    locked down so it may ONLY port-forward to this node's local compute API
+    (no shell, no other forwards).
+    """
+    from .config import load_config
+    import os
+    import httpx
+
+    cfg = load_config()
+    port = cfg.get("port", 7440)
+
+    if not pubkey:
+        base = (api_url or cfg.get("kanad_api_url") or cfg.get("kanad_url") or "").rstrip("/")
+        if not base:
+            console.print("[red]No kanad API URL. Pass --api-url or set kanad_api_url in config.[/red]")
+            raise SystemExit(1)
+        try:
+            r = httpx.get(f"{base}/api/compute/platform-key", timeout=10)
+            r.raise_for_status()
+            pubkey = r.json()["public_key"].strip()
+        except Exception as e:
+            console.print(f"[red]Could not fetch platform key from {base}: {e}[/red]")
+            raise SystemExit(1)
+
+    # Locked-down entry: restrict everything, then re-allow ONLY a local
+    # port-forward to the compute API. asyncssh needs nothing more.
+    opts = f'restrict,permitopen="127.0.0.1:{port}"'
+    entry = f"{opts} {pubkey}".strip()
+    keybody = " ".join(pubkey.split()[:2])  # 'keytype base64' for idempotency check
+
+    ak = os.path.expanduser("~/.ssh/authorized_keys")
+    os.makedirs(os.path.dirname(ak), mode=0o700, exist_ok=True)
+    existing = ""
+    if os.path.exists(ak):
+        with open(ak) as f:
+            existing = f.read()
+    if keybody and keybody in existing:
+        console.print("[yellow]Kanad platform key is already authorized.[/yellow]")
+        return
+    with open(ak, "a") as f:
+        if existing and not existing.endswith("\n"):
+            f.write("\n")
+        f.write(entry + "\n")
+    os.chmod(ak, 0o600)
+    console.print(Panel(
+        f"[bold green]Authorized kanad-app to connect over SSH.[/bold green]\n\n"
+        f"[dim]Locked to a local port-forward → 127.0.0.1:{port} only (no shell).[/dim]\n"
+        f"[dim]Run [bold]kanad-compute pair[/bold] to see your pairing details.[/dim]",
+        title="[bold green]Authorized[/bold green]",
+        border_style="green",
+    ))
 
 
 if __name__ == "__main__":

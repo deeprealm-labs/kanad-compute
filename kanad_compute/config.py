@@ -14,7 +14,9 @@ def _default_config() -> dict:
     return {
         "node_id": str(uuid.uuid4()),
         "api_key": secrets.token_urlsafe(32),
-        "host": "0.0.0.0",
+        # Bind to localhost: the node is reached only through an SSH port-forward
+        # from kanad-app, never directly over a public HTTP port.
+        "host": "127.0.0.1",
         "port": 7440,
         "kanad_api_url": "https://kanad-api-640826962316.us-central1.run.app",
         "max_workers": 2,
@@ -53,7 +55,9 @@ def init_config(
     port: int = 7440,
     max_qubits: int = 20,
     gpu: bool = False,
+    gpu_device: str = "auto",
     ibm_token: Optional[str] = None,
+    ibm_crn: Optional[str] = None,
     ionq_key: Optional[str] = None,
 ) -> dict:
     """Initialize a fresh config (preserves node_id/api_key if existing)."""
@@ -69,8 +73,13 @@ def init_config(
     cfg["port"] = port
     cfg["max_qubits"] = max_qubits
     cfg["gpu_enabled"] = gpu
+    # GPU statevector + det_ci engine selection: 'auto'|'amd' (rocm-planck)|
+    # 'nvidia' (cudaq)|'cpu'.
+    cfg["gpu_device"] = gpu_device
     if ibm_token:
         cfg["ibm_api_token"] = ibm_token
+    if ibm_crn:
+        cfg["ibm_crn"] = ibm_crn
     if ionq_key:
         cfg["ionq_api_key"] = ionq_key
 
