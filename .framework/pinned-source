@@ -1,3 +1,3 @@
 Source: deeprealm-labs/kanad
-SHA: 
-Bundled: 2026-07-03 (manual re-sync for sampling_sqd + planck SQD)
+SHA: eb66fae8beac525cf79de926d820c40b132a22c3
+Bundled: 2026-07-03 (pinned — matches worker.py + kanad-app)

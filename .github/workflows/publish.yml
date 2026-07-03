@@ -21,7 +21,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: deeprealm-labs/kanad
-          ref: main
+          # PINNED to the framework revision this worker.py is written against (the same
+          # commit the kanad-app runs). `main` has since drifted (e.g. SamplingSQDSolver
+          # dropped ibm_api_token/ibm_crn/gpu_device), breaking the vendored bundle. Bump
+          # this SHA only together with a matching worker.py update.
+          ref: eb66fae8beac525cf79de926d820c40b132a22c3
           path: kanad-framework
           token: ${{ secrets.KANAD_DISPATCH_PAT }}
 
