@@ -317,6 +317,11 @@ def run_calculation(job: dict, gpu_enabled: bool = False, gpu_device: str = "aut
             # Hybrid SQD: quantum sampling (QPU via user's IBM key, or local
             # statevector) + classical diagonalization via rocm-planck det_ci.
             _samp = backend_type if backend_type in ("ibm", "bluequbit") else "statevector"
+            # force_qpu (node config `force_qpu` / per-job flag): when set, a cloud-sampling
+            # failure is RAISED (the job fails with the real IBM error) instead of silently
+            # falling back to statevector — so "I picked the QPU" means QPU-or-nothing, and
+            # the reason the QPU couldn't be used is surfaced to the app instead of hidden.
+            _force_qpu = bool(job.get("force_qpu"))
             try:
                 sol_result = _run_sampling_sqd(
                     atoms, basis, charge, _samp, gpu_device,
@@ -324,12 +329,16 @@ def run_calculation(job: dict, gpu_enabled: bool = False, gpu_device: str = "aut
                     ibm_backend=job.get("ibm_backend_name"),
                     spin=int(job.get("spin", 0) or 0), phase_cb=_phase,
                 )
+                # Record WHERE the state was actually sampled so the app never has to
+                # guess whether the QPU ran (the fallback below is otherwise invisible).
+                sol_result["sampling_backend_used"] = _samp
             except Exception as _samp_err:
                 # A cloud sampler (IBM/BlueQubit) can fail on a bad/expired token, no
                 # available QPU, queue/network errors, etc. The correlated SQD result does
                 # NOT depend on WHERE the state is sampled — so fall back to local
-                # statevector sampling (+ GPU det_ci) rather than failing the whole job.
-                if _samp != "statevector":
+                # statevector sampling (+ GPU det_ci) rather than failing the whole job,
+                # UNLESS force_qpu is set (then surface the real error).
+                if _samp != "statevector" and not _force_qpu:
                     logger.warning("SQD %s sampling failed (%s); falling back to statevector sampling",
                                    _samp, _samp_err)
                     _phase("sampling_fallback",
@@ -340,6 +349,13 @@ def run_calculation(job: dict, gpu_enabled: bool = False, gpu_device: str = "aut
                         ibm_token=None, ibm_crn=None, ibm_backend=None,
                         spin=int(job.get("spin", 0) or 0), phase_cb=_phase,
                     )
+                    sol_result["sampling_backend_used"] = "statevector"
+                    sol_result["sampling_requested"] = _samp
+                    sol_result["sampling_fallback_reason"] = str(_samp_err)[:300]
+                elif _force_qpu and _samp != "statevector":
+                    raise RuntimeError(
+                        f"{_samp.upper()} sampling failed and force_qpu is enabled "
+                        f"(no statevector fallback): {_samp_err}") from _samp_err
                 else:
                     raise
         elif solver_type == "sqd":

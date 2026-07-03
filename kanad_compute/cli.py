@@ -83,10 +83,13 @@ def init(port, max_qubits, gpu, gpu_device, ibm_token, ionq_key, ngrok_token):
 @click.option("--port", default=None, type=int, help="Override port")
 @click.option("--reload", is_flag=True, help="Auto-reload (development; implies server-only)")
 @click.option("--no-tui", is_flag=True, help="Server only, no live dashboard (headless/systemd)")
-def start(host, port, reload, no_tui):
+@click.option("--force-qpu", is_flag=True,
+              help="For SQD/IBM jobs, run ONLY on the QPU — fail with the real error instead of "
+                   "silently falling back to local statevector sampling.")
+def start(host, port, reload, no_tui, force_qpu):
     """Start the Kanad Compute node. Shows a live dashboard in a terminal; runs
-    server-only when headless (--no-tui / no TTY). The node is reached by kanad-app
-    over SSH — it binds localhost, no public HTTP port."""
+    server-only when headless (--no-tui / no TTY). Polling nodes dial OUT to kanad-app;
+    SSH nodes bind localhost."""
     import sys
     import threading
     import time
@@ -97,6 +100,9 @@ def start(host, port, reload, no_tui):
         raise SystemExit(1)
 
     cfg = load_config()
+    # --force-qpu (or persisted force_qpu in config) → no statevector fallback for IBM SQD.
+    if force_qpu:
+        cfg["force_qpu"] = True
 
     # Zero-config polling node: dial OUT to kanad-app, pull jobs, push results.
     # No SSH, no inbound, works behind any NAT. Set by `kanad-compute connect`.

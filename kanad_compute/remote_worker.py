@@ -115,7 +115,10 @@ def start_worker(kanad_url: str, config: dict, status: dict = None):
                         entry["status"] = "completed"
                         entry["energy"] = result.get("energy")
 
-                        # Push result back
+                        # Push result back. sampling_backend_used / _requested /
+                        # _fallback_reason tell the app WHERE an SQD job actually sampled
+                        # (QPU vs statevector) so a silent fallback is never mistaken for a
+                        # real QPU run.
                         result_payload = {
                             "energy": result.get("energy"),
                             "hf_energy": result.get("hf_energy"),
@@ -125,8 +128,17 @@ def start_worker(kanad_url: str, config: dict, status: dict = None):
                             "converged": result.get("converged", True),
                             "convergence_history": result.get("convergence_history"),
                             "wall_time": result.get("wall_time"),
+                            "sampling_backend_used": result.get("sampling_backend_used"),
+                            "sampling_requested": result.get("sampling_requested"),
+                            "sampling_fallback_reason": result.get("sampling_fallback_reason"),
                             "status": "completed",
                         }
+                        # Surface the real backend in the TUI jobs table.
+                        try:
+                            if result.get("sampling_backend_used"):
+                                entry["backend"] = result["sampling_backend_used"]
+                        except Exception:
+                            pass
 
                         push_resp = httpx.post(
                             f"{kanad_url}/api/compute/jobs/{job_id}/result",
@@ -197,21 +209,34 @@ def _execute_job(job: dict, config: dict) -> dict:
     if not atoms:
         raise ValueError(f"No atoms parsed from: {atoms_raw!r}")
 
-    # Build job dict in the format run_calculation expects (top-level keys, not nested config)
+    # Build job dict in the format run_calculation expects (top-level keys, not nested config).
+    # IMPORTANT: pass through backend + cloud credentials + spin/kind/custom — this is what
+    # lets an SQD job actually sample on the user's IBM QPU (backend='ibm'). Hardcoding
+    # 'statevector' here silently forced every job onto the local simulator.
     job_record = {
         "job_id": job.get("job_id"),
+        "kind": job.get("kind", "energy"),
         "atoms": atoms,
         "basis": job.get("basis") or "sto-3g",
         "charge": job.get("charge", 0),
+        "spin": job.get("spin", 0),
         "solver": job.get("solver_type", "physics_vqe"),
-        "backend": "statevector",
+        "backend": job.get("backend") or "statevector",
         "max_iterations": job.get("max_iterations", 100),
         "max_excitations": job.get("max_excitations", 5),
         "ansatz_type": job.get("ansatz_type", "hardware_efficient"),
+        "ibm_api_token": job.get("ibm_api_token"),
+        "ibm_crn": job.get("ibm_crn"),
+        "ibm_backend_name": job.get("ibm_backend_name"),
+        "ionq_api_key": job.get("ionq_api_key"),
+        "custom_solver": job.get("custom_solver"),
+        # force_qpu: node config (all jobs) OR per-job flag — no silent statevector fallback.
+        "force_qpu": bool(config.get("force_qpu")) or bool(job.get("force_qpu")),
     }
 
     # run_calculation returns the result dict
-    result = run_calculation(job_record)
+    result = run_calculation(job_record, gpu_enabled=bool(config.get("gpu_enabled")),
+                             gpu_device=config.get("gpu_device", "auto"))
 
     if result.get("status") == "failed":
         raise RuntimeError(result.get("error_message", "Calculation failed"))
