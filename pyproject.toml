@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kanad-compute"
-version = "0.2.0"
+version = "0.2.1"
 description = "Turn your computer into a Kanad quantum chemistry compute server"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -33,12 +33,14 @@ dependencies = [
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
     "psutil>=5.9.0",
-    # Kanad core (quantum chemistry)
+    # Kanad core (quantum chemistry) — mirrors the kanad framework's own deps
     "numpy>=1.24",
     "scipy>=1.10",
     "qiskit>=1.2.0",
     "qiskit-aer>=0.15.0",
     "pyscf>=2.4",
+    "h5py>=3.10.0",          # PySCF I/O (transitive via pyscf, pinned for clarity)
+    "matplotlib>=3.8.0",     # analysis/plotting paths in the framework
 ]
 
 [project.optional-dependencies]
@@ -48,15 +50,22 @@ gpu = [
 ]
 ibm = [
     "qiskit-ibm-runtime>=0.28.0",
+    "qiskit-algorithms>=0.3.0",   # SPSA optimizer used on the IBM hardware path
 ]
 ionq = [
     "qiskit-ionq>=1.0.0",
+]
+bluequbit = [
+    "bluequbit>=0.9",
+]
+chem = [
+    "rdkit>=2023.9.1",            # SMILES → molecule parsing
 ]
 ngrok = [
     "pyngrok>=7.0",
 ]
 all = [
-    "kanad-compute[ibm,ionq]",
+    "kanad-compute[ibm,ionq,bluequbit,chem]",
 ]
 
 [project.scripts]
