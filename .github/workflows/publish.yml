@@ -25,7 +25,7 @@ jobs:
           # commit the kanad-app runs). `main` has since drifted (e.g. SamplingSQDSolver
           # dropped ibm_api_token/ibm_crn/gpu_device), breaking the vendored bundle. Bump
           # this SHA only together with a matching worker.py update.
-          ref: eb66fae8beac525cf79de926d820c40b132a22c3
+          ref: 195ae1cafd117a4366d5ad77756a9dd2faabd31d
           path: kanad-framework
           token: ${{ secrets.KANAD_DISPATCH_PAT }}
 
