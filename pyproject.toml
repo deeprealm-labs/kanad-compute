@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kanad-compute"
-version = "0.2.2"
+version = "0.2.3"
 description = "Turn your computer into a Kanad quantum chemistry compute server"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -33,14 +33,20 @@ dependencies = [
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
     "psutil>=5.9.0",
-    # Kanad core (quantum chemistry) — mirrors the kanad framework's own deps
+    # Kanad core (quantum chemistry) — matches the kanad-app requirements (the proven,
+    # runs-every-solver set). Missing these caused runtime ImportErrors on the node.
     "numpy>=1.24",
     "scipy>=1.10",
     "qiskit>=1.2.0",
     "qiskit-aer>=0.15.0",
+    "qiskit-ibm-runtime>=0.28.0",   # IBM QPU sampling (hybrid SQD path)
+    "openfermion>=1.6.0",           # Bravyi-Kitaev mapper delegates to openfermion
     "pyscf>=2.4",
-    "h5py>=3.10.0",          # PySCF I/O (transitive via pyscf, pinned for clarity)
-    "matplotlib>=3.8.0",     # analysis/plotting paths in the framework
+    "pyscf-properties>=0.1.0",      # dipole / property calculators
+    "rdkit>=2024.3.1",              # SMILES → molecule
+    "h5py>=3.10.0",                 # PySCF I/O
+    "matplotlib>=3.8.0",            # analysis / plotting paths
+    "pylatexenc>=2.10",             # qiskit circuit visualization
 ]
 
 [project.optional-dependencies]
@@ -49,7 +55,6 @@ gpu = [
     # "qiskit-aer-gpu>=0.15.0",
 ]
 ibm = [
-    "qiskit-ibm-runtime>=0.28.0",
     "qiskit-algorithms>=0.3.0",   # SPSA optimizer used on the IBM hardware path
 ]
 ionq = [
@@ -58,14 +63,11 @@ ionq = [
 bluequbit = [
     "bluequbit>=0.9",
 ]
-chem = [
-    "rdkit>=2023.9.1",            # SMILES → molecule parsing
-]
 ngrok = [
     "pyngrok>=7.0",
 ]
 all = [
-    "kanad-compute[ibm,ionq,bluequbit,chem]",
+    "kanad-compute[ibm,ionq,bluequbit]",
 ]
 
 [project.scripts]

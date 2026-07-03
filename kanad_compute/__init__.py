@@ -1,6 +1,6 @@
 """Kanad Compute — Turn your computer into a quantum chemistry compute server."""
 
-__version__ = "0.2.2"
+__version__ = "0.2.3"
 
 # Make bundled kanad framework importable as "import kanad"
 import sys as _sys
