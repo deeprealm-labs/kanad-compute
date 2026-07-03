@@ -255,10 +255,72 @@ def _start_polling(cfg):
     console.print(f"\n  Connecting to [bold green]{kanad_url}[/bold green] as a polling node")
     console.print(f"  node [bold white]{cfg.get('node_id','?')[:8]}[/bold white] · engine {cfg.get('gpu_device','auto')} · max qubits {cfg.get('max_qubits', 33)}")
     console.print("  [dim]Dialing out — no inbound connection, SSH or public port needed. Ctrl+C to stop.[/dim]\n")
+    import sys
+    import threading
+    import time as _time
+    from .sysinfo import get_system_info
+
+    # Headless (systemd / docker / no TTY): plain blocking loop, no dashboard.
+    if not sys.stdout.isatty():
+        try:
+            start_worker(kanad_url, cfg)
+        except KeyboardInterrupt:
+            pass
+        return
+
+    # Interactive: worker in a daemon thread + a live dashboard in the main thread.
+    status = {"connected": False, "polls": 0, "active": 0, "recent": [], "last_error": None}
+    info = {}
     try:
-        start_worker(kanad_url, cfg)
-    except KeyboardInterrupt:
-        console.print("\n[dim]Stopped.[/dim]")
+        info = get_system_info(cfg.get("gpu_enabled", False))
+    except Exception:
+        pass
+    threading.Thread(target=start_worker, args=(kanad_url, cfg, status), daemon=True).start()
+
+    from rich.live import Live
+    from rich.layout import Layout
+    from rich.text import Text
+
+    def render():
+        lay = Layout()
+        lay.split_column(Layout(name="header", size=3), Layout(name="body"), Layout(name="footer", size=3))
+        lay["body"].split_row(Layout(name="left"), Layout(name="right"))
+        conn = "[green]connected[/green]" if status.get("connected") else "[yellow]connecting...[/yellow]"
+        lay["header"].update(Panel(Text("KANAD COMPUTE   .   polling node", justify="center", style="bold cyan"),
+                                   subtitle=f"node {cfg.get('node_id','?')[:8]} . {conn}"))
+        c = Table(box=box.SIMPLE, show_header=False); c.add_column(style="dim"); c.add_column(style="white")
+        c.add_row("Platform", kanad_url.replace("https://", ""))
+        c.add_row("Transport", "polling (dials out)")
+        c.add_row("Status", conn)
+        c.add_row("Polls", str(status.get("polls", 0)))
+        eng = info.get("gpu_engine", "cpu")
+        c.add_row("Engine", f"[bold]{eng}[/bold]" + (f" ({info.get('gpu_name')})" if info.get("gpu_name") else ""))
+        c.add_row("Max qubits", str(info.get("max_qubits", cfg.get("max_qubits", 33))))
+        c.add_row("CPU / RAM", f"{info.get('cpu_physical','?')}c . {info.get('ram_total_gb','?')} GB")
+        c.add_row("Active jobs", str(status.get("active", 0)))
+        if status.get("last_error"):
+            c.add_row("Last error", f"[red]{str(status['last_error'])[:38]}[/red]")
+        lay["left"].update(Panel(c, title="Node", border_style="blue"))
+        j = Table(box=box.SIMPLE); j.add_column("job", style="dim"); j.add_column("system"); j.add_column("solver", style="dim"); j.add_column("status")
+        for e in status.get("recent", [])[:8]:
+            st = e.get("status", "?")
+            color = "green" if st == "completed" else "yellow" if st == "running" else "red"
+            en = e.get("energy"); ens = f"  {en:.4f} Ha" if isinstance(en, (int, float)) else ""
+            j.add_row(str(e.get("id",""))[:8], str(e.get("name","?"))[:14], str(e.get("solver","?"))[:14], f"[{color}]{st}{ens}[/{color}]")
+        if not status.get("recent"):
+            j.add_row("[dim]--[/dim]", "[dim]waiting for jobs[/dim]", "", "")
+        lay["right"].update(Panel(j, title="Jobs", border_style="cyan"))
+        lay["footer"].update(Panel(Text("Dialing out over HTTPS -- no SSH, public port or inbound needed.   Ctrl+C to stop.",
+                                        justify="center", style="dim")))
+        return lay
+
+    with Live(render(), console=console, refresh_per_second=4, screen=True) as live:
+        try:
+            while True:
+                _time.sleep(0.5)
+                live.update(render())
+        except KeyboardInterrupt:
+            pass
 
 
 @main.command()

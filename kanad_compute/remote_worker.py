@@ -20,8 +20,14 @@ POLL_INTERVAL = 2  # seconds
 HEARTBEAT_INTERVAL = 30  # seconds
 
 
-def start_worker(kanad_url: str, config: dict):
-    """Main worker loop — runs in a background thread."""
+def start_worker(kanad_url: str, config: dict, status: dict = None):
+    """Main worker loop — runs in a background thread.
+
+    ``status`` (optional) is a shared dict the loop updates for a live TUI:
+    connected, polls, active, recent (list of {id,name,solver,status,energy})."""
+    if status is None:
+        status = {}
+    status.setdefault("recent", [])
     api_key = config.get("api_key", "")
     node_id = config.get("node_id", "unknown")
     headers = {
@@ -40,11 +46,16 @@ def start_worker(kanad_url: str, config: dict):
         )
         if resp.status_code == 200:
             logger.info(f"Registered with Kanad platform at {kanad_url}")
+            status["connected"] = True
         else:
             logger.warning(f"Registration failed ({resp.status_code}): {resp.text[:200]}")
+            status["connected"] = False
+            status["last_error"] = f"register {resp.status_code}: {resp.text[:80]}"
     except Exception as e:
         logger.error(f"Failed to connect to Kanad platform: {e}")
         logger.info("Will keep retrying...")
+        status["connected"] = False
+        status["last_error"] = str(e)[:100]
 
     # Poll loop
     active_jobs = 0
@@ -76,6 +87,8 @@ def start_worker(kanad_url: str, config: dict):
                     time.sleep(POLL_INTERVAL)
                     continue
 
+                status["connected"] = True
+                status["polls"] = status.get("polls", 0) + 1
                 data = resp.json()
                 jobs = data.get("jobs", [])
 
@@ -90,10 +103,17 @@ def start_worker(kanad_url: str, config: dict):
                         continue
 
                     active_jobs += 1
+                    status["active"] = active_jobs
+                    entry = {"id": job_id, "name": job.get("molecule_name") or "?",
+                             "solver": job.get("solver_type") or "?", "status": "running", "energy": None}
+                    status["recent"].insert(0, entry)
+                    del status["recent"][8:]
                     logger.info(f"Picked up job {job_id[:8]} — {job.get('molecule_name', '?')} / {job.get('solver_type', '?')}")
 
                     try:
                         result = _execute_job(job, config)
+                        entry["status"] = "completed"
+                        entry["energy"] = result.get("energy")
 
                         # Push result back
                         result_payload = {
@@ -121,6 +141,8 @@ def start_worker(kanad_url: str, config: dict):
 
                     except Exception as e:
                         logger.error(f"Job {job_id[:8]} failed: {e}")
+                        entry["status"] = "failed"
+                        status["last_error"] = str(e)[:100]
                         try:
                             httpx.post(
                                 f"{kanad_url}/api/compute/jobs/{job_id}/result",
@@ -132,9 +154,11 @@ def start_worker(kanad_url: str, config: dict):
                             pass
                     finally:
                         active_jobs = max(0, active_jobs - 1)
+                        status["active"] = active_jobs
 
             except httpx.ConnectError:
                 logger.debug("Kanad platform unreachable, retrying...")
+                status["connected"] = False
                 time.sleep(5)
             except Exception as e:
                 logger.debug(f"Poll error: {e}")
