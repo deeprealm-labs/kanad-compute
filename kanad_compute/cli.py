@@ -97,6 +97,13 @@ def start(host, port, reload, no_tui):
         raise SystemExit(1)
 
     cfg = load_config()
+
+    # Zero-config polling node: dial OUT to kanad-app, pull jobs, push results.
+    # No SSH, no inbound, works behind any NAT. Set by `kanad-compute connect`.
+    if cfg.get("transport") == "polling":
+        _start_polling(cfg)
+        return
+
     _host = host or cfg.get("host", "127.0.0.1")
     _port = port or cfg.get("port", 7440)
 
@@ -229,6 +236,60 @@ def _run_tui(cfg, port):
                 live.update(render())
         except KeyboardInterrupt:
             pass
+
+
+def _start_polling(cfg):
+    """Run as an outbound polling node: register with kanad-app, poll for jobs,
+    execute locally, push results. No inbound connection required."""
+    from .remote_worker import start_worker
+
+    kanad_url = (cfg.get("kanad_api_url") or cfg.get("kanad_url") or "").rstrip("/")
+    if not kanad_url:
+        console.print("[red]No kanad_api_url in config. Re-run [bold]kanad-compute connect <token>[/bold].[/red]")
+        raise SystemExit(1)
+    if not cfg.get("api_key"):
+        console.print("[red]Not connected. Run [bold]kanad-compute connect <token>[/bold] first.[/red]")
+        raise SystemExit(1)
+
+    console.print(BANNER)
+    console.print(f"\n  Connecting to [bold green]{kanad_url}[/bold green] as a polling node")
+    console.print(f"  node [bold white]{cfg.get('node_id','?')[:8]}[/bold white] · engine {cfg.get('gpu_device','auto')} · max qubits {cfg.get('max_qubits', 33)}")
+    console.print("  [dim]Dialing out — no inbound connection, SSH or public port needed. Ctrl+C to stop.[/dim]\n")
+    try:
+        start_worker(kanad_url, cfg)
+    except KeyboardInterrupt:
+        console.print("\n[dim]Stopped.[/dim]")
+
+
+@main.command()
+@click.argument("token")
+@click.option("--api-url", default=None, help="kanad-app API base (default: config / production)")
+def connect(token, api_url):
+    """Connect this machine to kanad-app as a zero-config polling node.
+
+    Paste the token from kanad-app → Backend Config → Connect a node. The node
+    dials OUT over HTTPS — no SSH, no public IP, no port-forwarding. Then run
+    `kanad-compute start`.
+    """
+    from .config import load_config, save_config, CONFIG_FILE, _default_config
+
+    token = (token or "").strip()
+    if not token:
+        console.print("[red]Empty token. Copy it from kanad-app → Backend Config → Connect a node.[/red]")
+        raise SystemExit(1)
+
+    cfg = load_config() if CONFIG_FILE.exists() else _default_config()
+    cfg["api_key"] = token          # the enrollment token IS the node's bearer
+    cfg["transport"] = "polling"
+    if api_url:
+        cfg["kanad_api_url"] = api_url.rstrip("/")
+    cfg.setdefault("kanad_api_url", "https://kanad-api-640826962316.us-central1.run.app")
+    save_config(cfg)
+
+    console.print(BANNER)
+    console.print(f"\n  [green]✓ Connected[/green] to [bold]{cfg['kanad_api_url']}[/bold]")
+    console.print(f"  node [bold white]{cfg.get('node_id','?')[:8]}[/bold white]")
+    console.print("\n  Now run [bold cyan]kanad-compute start[/bold cyan] to begin taking jobs.\n")
 
 
 @main.command()

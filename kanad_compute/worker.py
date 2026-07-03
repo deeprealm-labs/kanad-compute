@@ -750,7 +750,14 @@ def _run_physics_vqe(
             kwargs["cloud_credentials"] = _creds
 
     solver = PhysicsVQE(**kwargs)
-    res = solver.solve(callback=callback) if callback else solver.solve()
+    # PhysicsVQE.solve() signature varies by framework version — pass a progress
+    # callback only if it actually accepts one (older/other solvers don't).
+    import inspect as _inspect
+    try:
+        _accepts_cb = callback is not None and "callback" in _inspect.signature(solver.solve).parameters
+    except (TypeError, ValueError):
+        _accepts_cb = False
+    res = solver.solve(callback=callback) if _accepts_cb else solver.solve()
 
     history = []
     if hasattr(solver, "_energy_history"):
