@@ -20,7 +20,7 @@ def _default_config() -> dict:
         "port": 7440,
         "kanad_api_url": "https://kanad-api-640826962316.us-central1.run.app",
         "max_workers": 2,
-        "max_qubits": 20,
+        "max_qubits": 33,  # rocm-planck GPU statevector on MI300X (192GB): 2^33 * 16B ≈ 137GB fits
         "gpu_enabled": False,
         "gpu_device": "auto",
         "ibm_api_token": None,
@@ -53,7 +53,7 @@ def save_config(cfg: dict) -> Path:
 
 def init_config(
     port: int = 7440,
-    max_qubits: int = 20,
+    max_qubits: int = 33,
     gpu: bool = False,
     gpu_device: str = "auto",
     ibm_token: Optional[str] = None,

@@ -22,7 +22,7 @@ def main():
 
 @main.command()
 @click.option("--port", default=7440, help="Server port (default: 7440)")
-@click.option("--max-qubits", default=20, help="Max qubits to accept (default: 20)")
+@click.option("--max-qubits", default=33, help="Max qubits to accept (default: 33)")
 @click.option("--gpu/--no-gpu", default=False, help="Enable GPU acceleration")
 @click.option("--gpu-device", default="auto", type=click.Choice(["auto", "amd", "nvidia", "cpu"]),
               help="GPU engine: amd (rocm-planck) | nvidia (cudaq) | cpu | auto")
@@ -202,7 +202,7 @@ def _run_tui(cfg, port):
         eng = info0.get("gpu_engine", "cpu")
         m.add_row("Engine", f"[bold]{eng}[/bold]" + (f"  ({info0.get('gpu_name')})" if info0.get("gpu_name") else ""))
         m.add_row("GPU vendor", info0.get("gpu_vendor") or "none")
-        m.add_row("Max qubits", str(info0.get("max_qubits", cfg.get("max_qubits", 20))))
+        m.add_row("Max qubits", str(info0.get("max_qubits", cfg.get("max_qubits", 33))))
         m.add_row("CPU / RAM", f"{info0.get('cpu_physical', '?')}c · {info0.get('ram_total_gb', '?')} GB")
         active = sum(1 for j in (jobs or []) if j.get("status") in ("pending", "running"))
         m.add_row("Active jobs", f"{active} / {info0.get('max_workers', cfg.get('max_workers', 2))}")

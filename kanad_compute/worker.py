@@ -232,6 +232,21 @@ def run_calculation(job: dict, gpu_enabled: bool = False, gpu_device: str = "aut
             except Exception:
                 pass
 
+        # Throttled live CPU/GPU/VRAM utilization tag for progress lines (rocm-smi is
+        # a subprocess, so refresh at most once per ~2s no matter how often we log).
+        _res_cache = {"t": 0.0, "summary": ""}
+
+        def _resources():
+            now = time.time()
+            if now - _res_cache["t"] > 2.0:
+                try:
+                    from .sysinfo import resource_summary
+                    _res_cache["summary"] = resource_summary()
+                except Exception:
+                    _res_cache["summary"] = ""
+                _res_cache["t"] = now
+            return _res_cache["summary"]
+
         def _phase(phase, message=None, **extra):
             if cancel_check and cancel_check():
                 raise JobCancelled()
@@ -246,6 +261,16 @@ def run_calculation(job: dict, gpu_enabled: bool = False, gpu_device: str = "aut
                 payload.setdefault("message", message)
             else:
                 payload = {"phase": phase, "message": message, **extra}
+            # Attach live resource utilization (structured field + inline in the message
+            # so it shows in the app log without any app-side change).
+            try:
+                res = _resources()
+                if res:
+                    payload["resources"] = res
+                    if payload.get("message"):
+                        payload["message"] = f"{payload['message']}  ·  {res}"
+            except Exception:
+                pass
             try:
                 progress_cb(payload)
             except Exception:
@@ -292,12 +317,31 @@ def run_calculation(job: dict, gpu_enabled: bool = False, gpu_device: str = "aut
             # Hybrid SQD: quantum sampling (QPU via user's IBM key, or local
             # statevector) + classical diagonalization via rocm-planck det_ci.
             _samp = backend_type if backend_type in ("ibm", "bluequbit") else "statevector"
-            sol_result = _run_sampling_sqd(
-                atoms, basis, charge, _samp, gpu_device,
-                ibm_token=job.get("ibm_api_token"), ibm_crn=ibm_crn,
-                ibm_backend=job.get("ibm_backend_name"),
-                spin=int(job.get("spin", 0) or 0), phase_cb=_phase,
-            )
+            try:
+                sol_result = _run_sampling_sqd(
+                    atoms, basis, charge, _samp, gpu_device,
+                    ibm_token=job.get("ibm_api_token"), ibm_crn=ibm_crn,
+                    ibm_backend=job.get("ibm_backend_name"),
+                    spin=int(job.get("spin", 0) or 0), phase_cb=_phase,
+                )
+            except Exception as _samp_err:
+                # A cloud sampler (IBM/BlueQubit) can fail on a bad/expired token, no
+                # available QPU, queue/network errors, etc. The correlated SQD result does
+                # NOT depend on WHERE the state is sampled — so fall back to local
+                # statevector sampling (+ GPU det_ci) rather than failing the whole job.
+                if _samp != "statevector":
+                    logger.warning("SQD %s sampling failed (%s); falling back to statevector sampling",
+                                   _samp, _samp_err)
+                    _phase("sampling_fallback",
+                           f"{_samp.upper()} sampling unavailable ({str(_samp_err)[:90]}) — "
+                           "falling back to local statevector sampling")
+                    sol_result = _run_sampling_sqd(
+                        atoms, basis, charge, "statevector", gpu_device,
+                        ibm_token=None, ibm_crn=None, ibm_backend=None,
+                        spin=int(job.get("spin", 0) or 0), phase_cb=_phase,
+                    )
+                else:
+                    raise
         elif solver_type == "sqd":
             sol_result = _run_sqd(atoms, basis, charge)
         elif solver_type == "krylov_sqd":

@@ -131,7 +131,7 @@ def create_app(config: Optional[dict] = None) -> FastAPI:
         sys_info = get_system_info(config.get("gpu_enabled", True))
         sys_info["node_id"] = config.get("node_id")
         sys_info["gpu_device"] = config.get("gpu_device", "auto")
-        sys_info["max_qubits"] = config.get("max_qubits", 20)
+        sys_info["max_qubits"] = config.get("max_qubits", 33)
         sys_info["max_workers"] = config.get("max_workers", 2)
         sys_info["active_jobs"] = sum(
             1 for j in jobs.values() if j["status"] in ("pending", "running")
@@ -149,7 +149,7 @@ def create_app(config: Optional[dict] = None) -> FastAPI:
         # 2*len(atoms) qubit cap must not apply to it.
         if job.kind != "materials":
             n_qubits = 2 * len(job.atoms)
-            max_q = config.get("max_qubits", 20)
+            max_q = config.get("max_qubits", 33)
             if n_qubits > max_q:
                 raise HTTPException(
                     status_code=400,
