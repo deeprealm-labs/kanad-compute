@@ -57,31 +57,100 @@ def start_worker(kanad_url: str, config: dict, status: dict = None):
         status["connected"] = False
         status["last_error"] = str(e)[:100]
 
-    # Poll loop
-    active_jobs = 0
+    # Poll loop — each job runs in a WORKER THREAD so the main loop keeps HEARTBEATING while a
+    # long job runs (e.g. an IBM QPU submission that blocks on the IBM queue). Previously the
+    # single-threaded loop froze inside _execute_job and the app marked the node offline.
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    active = {"n": 0}
+    active_lock = threading.Lock()
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="kc-job")
     last_heartbeat = time.time()
+
+    def _run_and_report(job, entry):
+        job_id = job.get("job_id")
+        try:
+            result = _execute_job(job, config)
+            entry["status"] = "completed"
+            entry["energy"] = result.get("energy")
+            # sampling_backend_used / _requested / _fallback_reason tell the app WHERE an SQD
+            # job actually sampled (QPU vs statevector) so a silent fallback is never mistaken
+            # for a real QPU run.
+            result_payload = {
+                "energy": result.get("energy"),
+                "hf_energy": result.get("hf_energy"),
+                "fci_energy": result.get("fci_energy"),
+                "error_mha": result.get("error_mha"),
+                "n_evaluations": result.get("n_evaluations"),
+                "converged": result.get("converged", True),
+                "convergence_history": result.get("convergence_history"),
+                "wall_time": result.get("wall_time"),
+                "sampling_backend_used": result.get("sampling_backend_used"),
+                "sampling_requested": result.get("sampling_requested"),
+                "sampling_fallback_reason": result.get("sampling_fallback_reason"),
+                "status": "completed",
+            }
+            try:
+                if result.get("sampling_backend_used"):
+                    entry["backend"] = result["sampling_backend_used"]
+            except Exception:
+                pass
+            try:
+                push_resp = httpx.post(
+                    f"{kanad_url}/api/compute/jobs/{job_id}/result",
+                    json=result_payload, headers=headers, timeout=10,
+                )
+                if push_resp.status_code == 200:
+                    logger.info(f"Job {job_id[:8]} completed — E = {result.get('energy', '?')}")
+                else:
+                    logger.warning(f"Failed to push result for {job_id[:8]}: {push_resp.status_code}")
+            except Exception as e:
+                logger.warning(f"Result push failed for {job_id[:8]}: {e}")
+        except Exception as e:
+            logger.error(f"Job {job_id[:8]} failed: {e}")
+            entry["status"] = "failed"
+            status["last_error"] = str(e)[:100]
+            try:
+                httpx.post(
+                    f"{kanad_url}/api/compute/jobs/{job_id}/result",
+                    json={"status": "failed", "error_message": str(e)},
+                    headers=headers, timeout=10,
+                )
+            except Exception:
+                pass
+        finally:
+            with active_lock:
+                active["n"] = max(0, active["n"] - 1)
+            status["active"] = active["n"]
 
     while True:
         try:
-            # Heartbeat
+            # Heartbeat — on every tick, INCLUDING while a job executes in the worker thread,
+            # so a long QPU job never makes the app think the node went offline.
             if time.time() - last_heartbeat > HEARTBEAT_INTERVAL:
                 try:
                     httpx.post(
                         f"{kanad_url}/api/compute/heartbeat",
-                        json={"node_id": node_id, "active_jobs": active_jobs},
-                        headers=headers,
-                        timeout=5,
+                        json={"node_id": node_id, "active_jobs": active["n"]},
+                        headers=headers, timeout=5,
                     )
                     last_heartbeat = time.time()
                 except Exception:
                     pass
 
+            # Only claim new work when idle — the server marks claimed jobs 'running', so we
+            # must be ready to run them; one batch at a time keeps GPU memory uncontended.
+            with active_lock:
+                busy = active["n"] > 0
+            if busy:
+                time.sleep(POLL_INTERVAL)
+                continue
+
             # Poll for jobs
             try:
                 resp = httpx.get(
-                    f"{kanad_url}/api/compute/jobs",
-                    headers=headers,
-                    timeout=10,
+                    f"{kanad_url}/api/compute/jobs", headers=headers, timeout=10,
                 )
                 if resp.status_code != 200:
                     time.sleep(POLL_INTERVAL)
@@ -89,84 +158,26 @@ def start_worker(kanad_url: str, config: dict, status: dict = None):
 
                 status["connected"] = True
                 status["polls"] = status.get("polls", 0) + 1
-                data = resp.json()
-                jobs = data.get("jobs", [])
+                jobs = resp.json().get("jobs", [])
 
                 if not jobs:
                     time.sleep(POLL_INTERVAL)
                     continue
 
-                # Process each job
                 for job in jobs:
                     job_id = job.get("job_id")
                     if not job_id:
                         continue
-
-                    active_jobs += 1
-                    status["active"] = active_jobs
+                    with active_lock:
+                        active["n"] += 1
+                    status["active"] = active["n"]
                     entry = {"id": job_id, "name": job.get("molecule_name") or "?",
                              "solver": job.get("solver_type") or "?", "status": "running", "energy": None}
                     status["recent"].insert(0, entry)
                     del status["recent"][8:]
                     logger.info(f"Picked up job {job_id[:8]} — {job.get('molecule_name', '?')} / {job.get('solver_type', '?')}")
-
-                    try:
-                        result = _execute_job(job, config)
-                        entry["status"] = "completed"
-                        entry["energy"] = result.get("energy")
-
-                        # Push result back. sampling_backend_used / _requested /
-                        # _fallback_reason tell the app WHERE an SQD job actually sampled
-                        # (QPU vs statevector) so a silent fallback is never mistaken for a
-                        # real QPU run.
-                        result_payload = {
-                            "energy": result.get("energy"),
-                            "hf_energy": result.get("hf_energy"),
-                            "fci_energy": result.get("fci_energy"),
-                            "error_mha": result.get("error_mha"),
-                            "n_evaluations": result.get("n_evaluations"),
-                            "converged": result.get("converged", True),
-                            "convergence_history": result.get("convergence_history"),
-                            "wall_time": result.get("wall_time"),
-                            "sampling_backend_used": result.get("sampling_backend_used"),
-                            "sampling_requested": result.get("sampling_requested"),
-                            "sampling_fallback_reason": result.get("sampling_fallback_reason"),
-                            "status": "completed",
-                        }
-                        # Surface the real backend in the TUI jobs table.
-                        try:
-                            if result.get("sampling_backend_used"):
-                                entry["backend"] = result["sampling_backend_used"]
-                        except Exception:
-                            pass
-
-                        push_resp = httpx.post(
-                            f"{kanad_url}/api/compute/jobs/{job_id}/result",
-                            json=result_payload,
-                            headers=headers,
-                            timeout=10,
-                        )
-                        if push_resp.status_code == 200:
-                            logger.info(f"Job {job_id[:8]} completed — E = {result.get('energy', '?')}")
-                        else:
-                            logger.warning(f"Failed to push result for {job_id[:8]}: {push_resp.status_code}")
-
-                    except Exception as e:
-                        logger.error(f"Job {job_id[:8]} failed: {e}")
-                        entry["status"] = "failed"
-                        status["last_error"] = str(e)[:100]
-                        try:
-                            httpx.post(
-                                f"{kanad_url}/api/compute/jobs/{job_id}/result",
-                                json={"status": "failed", "error_message": str(e)},
-                                headers=headers,
-                                timeout=10,
-                            )
-                        except Exception:
-                            pass
-                    finally:
-                        active_jobs = max(0, active_jobs - 1)
-                        status["active"] = active_jobs
+                    executor.submit(_run_and_report, job, entry)
+                time.sleep(POLL_INTERVAL)
 
             except httpx.ConnectError:
                 logger.debug("Kanad platform unreachable, retrying...")
