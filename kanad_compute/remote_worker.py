@@ -233,6 +233,11 @@ def _execute_job(job: dict, config: dict) -> dict:
         "custom_solver": job.get("custom_solver"),
         # force_qpu: node config (all jobs) OR per-job flag — no silent statevector fallback.
         "force_qpu": bool(config.get("force_qpu")) or bool(job.get("force_qpu")),
+        # Whole-workflow runners (_run_dynamics / _run_reaction / _run_materials /
+        # _run_photodynamics) read their params from job["config"] (force_method, n_steps,
+        # timestep, thermostat, ...). Without it a dynamics job silently ran HF forces / 100
+        # default steps instead of the requested SQD-force trajectory.
+        "config": job.get("config") or {},
     }
 
     # run_calculation returns the result dict
