@@ -360,6 +360,84 @@ def connect(token, api_url):
     console.print("\n  Now run [bold cyan]kanad-compute start[/bold cyan] to begin taking jobs.\n")
 
 
+@main.command("install-gpu")
+@click.option("--platform", type=click.Choice(["auto", "amd", "nvidia"]), default="auto",
+              help="GPU platform — auto-detects AMD (ROCm) or NVIDIA (CUDA)")
+@click.option("--ref", default="main", help="rocm-planck git ref to build")
+@click.option("--source", default="https://github.com/deeprealm-labs/rocm-planck.git",
+              help="rocm-planck git URL or a local path")
+def install_gpu(platform, ref, source):
+    """Build + install the GPU accelerator (rocm-planck).
+
+    Detects your GPU, fetches deeprealm-labs/rocm-planck, and builds the native HIP/CUDA engine
+    (GPU statevector + det-CI) into this environment via pip. Requires a ROCm (AMD) or CUDA
+    (NVIDIA) toolchain and a C++ compiler. Not needed on CPU-only machines — the node runs on
+    CPU without it.
+    """
+    import os
+    import sys
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    console.print(BANNER)
+    console.print()
+
+    # 1. resolve the GPU platform
+    if platform == "auto":
+        from .sysinfo import detect_gpu
+        g = detect_gpu()
+        platform = g.get("gpu_vendor")
+        if not platform:
+            console.print("[yellow]No AMD/NVIDIA GPU detected — rocm-planck is GPU-only. "
+                          "The node runs fine on CPU without it.[/yellow]")
+            raise SystemExit(1)
+        console.print(f"  GPU: [bold]{g.get('gpu_name') or platform}[/bold]  ·  platform [bold]{platform}[/bold]")
+
+    # 2. fetch the source (cached clone, or a local path)
+    if source and os.path.isdir(source):
+        src = Path(source).resolve()
+        console.print(f"  Using local rocm-planck at [bold]{src}[/bold]")
+    else:
+        src = Path.home() / ".kanad-compute" / "rocm-planck"
+        src.parent.mkdir(parents=True, exist_ok=True)
+        if (src / ".git").exists():
+            console.print(f"  Updating rocm-planck ({ref}) …")
+            subprocess.run(["git", "-C", str(src), "fetch", "--depth", "1", "origin", ref], check=False)
+            subprocess.run(["git", "-C", str(src), "checkout", "-f", "FETCH_HEAD"], check=False)
+        else:
+            if src.exists():
+                shutil.rmtree(src)
+            console.print(f"  Cloning rocm-planck ({ref}) …")
+            if subprocess.run(["git", "clone", "--depth", "1", "--branch", ref, source, str(src)]).returncode != 0:
+                console.print("[red]Clone failed — check your network / the ref.[/red]")
+                raise SystemExit(1)
+
+    # 3. build + install into THIS interpreter's environment
+    console.print(f"  Building for [bold]{platform}[/bold] — this can take a few minutes…")
+    env = dict(os.environ)
+    if platform == "amd" and os.path.isdir("/opt/rocm/bin"):
+        env["PATH"] = "/opt/rocm/bin:" + env.get("PATH", "")
+    cmd = [sys.executable, "-m", "pip", "install", str(src),
+           "-C", f"cmake.args=-DPLANCK_GPU_PLATFORM={platform}"]
+    if subprocess.run(cmd, env=env).returncode != 0:
+        console.print("[red]Build failed. Ensure a ROCm/CUDA toolchain + C++ compiler are present "
+                      "(hipcc for AMD, nvcc for NVIDIA), then retry.[/red]")
+        raise SystemExit(1)
+
+    # 4. verify the GPU core loaded
+    check = subprocess.run(
+        [sys.executable, "-c",
+         "from planck.statevector import StateVector; print('OK')"],
+        capture_output=True, text=True)
+    if "OK" in check.stdout:
+        console.print("\n  [green]✓ rocm-planck installed — GPU acceleration is available.[/green]")
+        console.print("  Run [bold cyan]kanad-compute start[/bold cyan] (or restart it) to use the GPU engine.\n")
+    else:
+        console.print(f"\n[yellow]  Installed, but the GPU core didn't load ({check.stdout.strip() or 'import failed'}). "
+                      f"{check.stderr.strip()[:160]}[/yellow]")
+
+
 @main.command()
 def status():
     """Check server status and system info."""

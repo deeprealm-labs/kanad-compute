@@ -43,10 +43,15 @@ def get_system_info(check_gpu: bool = False) -> dict:
 
 
 def _planck_gpu_available() -> bool:
-    """rocm-planck GPU statevector core present (PLANCK_GPU_PLATFORM build loaded)."""
+    """rocm-planck GPU statevector core present + loadable (PLANCK_GPU_PLATFORM build).
+
+    Current planck exposes the compiled core as planck.statevector.StateVector (there is no
+    _GPU_CORE_AVAILABLE flag) — a successful import of that is the availability signal the
+    framework's planck_adapter actually relies on.
+    """
     try:
-        import planck
-        return bool(getattr(planck, "_GPU_CORE_AVAILABLE", False))
+        from planck.statevector import StateVector  # noqa: F401
+        return True
     except Exception:
         return False
 

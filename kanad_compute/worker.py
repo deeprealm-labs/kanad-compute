@@ -146,9 +146,8 @@ def _resolve_sv_backend(backend_type: str, gpu_device: str = "auto", gpu_enabled
         gd = (gpu_device or "auto").lower()
         if gd in ("amd", "auto"):
             try:
-                import planck
-                if getattr(planck, "_GPU_CORE_AVAILABLE", False):
-                    return "planck"
+                from planck.statevector import StateVector  # noqa: F401  GPU core present + loadable?
+                return "planck"
             except Exception:
                 pass
         return "statevector"
