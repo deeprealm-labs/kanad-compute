@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kanad-compute"
-version = "0.2.10"
+version = "0.2.11"
 description = "Turn your computer into a Kanad quantum chemistry compute server"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -52,7 +52,9 @@ dependencies = [
     # are pure-python / wheels and qiskit-2.x compatible, so they belong in the default set.
     "ffsim>=0.0.80",                # LUCJ ansatz (IBM-hardware SQD)
     "qiskit-addon-sqd>=0.11.0",     # sample-based quantum diagonalization
-    "qiskit-nature>=0.8.0",         # qubit tapering (mapper path)
+    # NOTE: qiskit-nature (optional qubit tapering) is intentionally NOT here — its current
+    # release needs numpy>=2 which conflicts with the numpy<2 pin. The framework imports it
+    # optionally (try/except) so tapering just degrades gracefully; SQD/LUCJ don't need it.
 ]
 
 [project.optional-dependencies]
