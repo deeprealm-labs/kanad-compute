@@ -70,9 +70,54 @@ def start_worker(kanad_url: str, config: dict, status: dict = None):
 
     def _run_and_report(job, entry):
         job_id = job.get("job_id")
+
+        # --- Live progress channel (worker-thread → app) ---
+        # Throttle to at most once per ~1.5s; a failed/slow POST must never crash or stall
+        # the solve (the science keeps running even if the app is briefly unreachable).
+        _prog_state = {"t": 0.0}
+
+        def progress_cb(payload):
+            now = time.time()
+            if now - _prog_state["t"] < 1.5:
+                return
+            _prog_state["t"] = now
+            try:
+                httpx.post(
+                    f"{kanad_url}/api/compute/jobs/{job_id}/progress",
+                    json={"progress": payload}, headers=headers, timeout=5,
+                )
+            except Exception:
+                pass
+
+        # --- Cooperative cancellation (app → worker-thread) ---
+        # Poll the app at most every ~3s (cache the last verdict in between so a tight
+        # per-evaluation callback doesn't hammer the network). Any error → assume NOT
+        # cancelled (a transient network blip must not kill a running job).
+        _cancel_state = {"t": 0.0, "cancelled": False}
+
+        def cancel_check():
+            now = time.time()
+            if now - _cancel_state["t"] < 3.0:
+                return _cancel_state["cancelled"]
+            _cancel_state["t"] = now
+            try:
+                r = httpx.get(
+                    f"{kanad_url}/api/compute/jobs/{job_id}/cancelled",
+                    headers=headers, timeout=5,
+                )
+                if r.status_code == 200:
+                    _cancel_state["cancelled"] = bool(r.json().get("cancelled"))
+            except Exception:
+                _cancel_state["cancelled"] = False
+            return _cancel_state["cancelled"]
+
         try:
-            result = _execute_job(job, config)
-            entry["status"] = "completed"
+            result = _execute_job(job, config, progress_cb=progress_cb, cancel_check=cancel_check)
+            # Respect the real terminal status — a user-cancelled job returns
+            # status='cancelled' from run_calculation and must NOT be reported as completed
+            # (that would push a null-energy result as a success). Everything else → completed.
+            _status = result.get("status") if result.get("status") in ("cancelled",) else "completed"
+            entry["status"] = _status
             entry["energy"] = result.get("energy")
             # Forward the FULL result dict so WHOLE-WORKFLOW jobs survive — dynamics
             # (trajectory / n_steps_completed / avg_temperature), reaction (pes_points),
@@ -80,7 +125,7 @@ def start_worker(kanad_url: str, config: dict, status: dict = None):
             # energy subset was sent, so a dynamics run posted an energy-shaped result with no
             # trajectory (the app saw 0 steps). run_calculation already returns JSON-safe values
             # (numpy → lists), and sampling_backend_used etc. are part of that dict for SQD jobs.
-            result_payload = {**result, "status": "completed"}
+            result_payload = {**result, "status": _status}
             try:
                 if result.get("sampling_backend_used"):
                     entry["backend"] = result["sampling_backend_used"]
@@ -184,8 +229,12 @@ def start_worker(kanad_url: str, config: dict, status: dict = None):
             time.sleep(5)
 
 
-def _execute_job(job: dict, config: dict) -> dict:
-    """Execute a single job using the existing worker infrastructure."""
+def _execute_job(job: dict, config: dict, progress_cb=None, cancel_check=None) -> dict:
+    """Execute a single job using the existing worker infrastructure.
+
+    progress_cb / cancel_check are forwarded to run_calculation so the solver can stream
+    live progress to the app and be cancelled mid-run (both are optional; None → the job
+    runs exactly as before)."""
     import time as _time
 
     start = _time.time()
@@ -242,7 +291,8 @@ def _execute_job(job: dict, config: dict) -> dict:
 
     # run_calculation returns the result dict
     result = run_calculation(job_record, gpu_enabled=bool(config.get("gpu_enabled")),
-                             gpu_device=config.get("gpu_device", "auto"))
+                             gpu_device=config.get("gpu_device", "auto"),
+                             progress_cb=progress_cb, cancel_check=cancel_check)
 
     if result.get("status") == "failed":
         raise RuntimeError(result.get("error_message", "Calculation failed"))

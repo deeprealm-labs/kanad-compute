@@ -8,8 +8,13 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 
-def _build_bond(atoms: list[dict], basis: str = "sto-3g", charge: int = 0):
-    """Build a Kanad bond/molecule from atom list."""
+def _build_bond(atoms: list[dict], basis: str = "sto-3g", charge: int = 0, spin: int = 0):
+    """Build a Kanad bond/molecule from atom list.
+
+    spin (=2S, number of unpaired electrons) must reach the underlying molecule so
+    open-shell systems build the correct multiplicity. BondFactory.create_bond honors
+    a `spin` kwarg (verified: it sets molecule.spin), so the diatomic path forwards it;
+    the polyatomic path routes to _build_molecule, which sets Molecule(spin=spin)."""
     from kanad import BondFactory
 
     if len(atoms) == 2:
@@ -21,13 +26,13 @@ def _build_bond(atoms: list[dict], basis: str = "sto-3g", charge: int = 0):
         dist = math.sqrt(dx*dx + dy*dy + dz*dz)
         return BondFactory.create_bond(
             a1["symbol"], a2["symbol"],
-            distance=dist, basis=basis, charge=charge,
+            distance=dist, basis=basis, charge=charge, spin=spin,
         )
     else:
         # Polyatomic: BondFactory.create_molecule ignores positions/charge and
-        # fabricates geometry. Build a real Molecule (honors positions+charge+basis);
+        # fabricates geometry. Build a real Molecule (honors positions+charge+basis+spin);
         # its .hamiltonian works with the solvers via BaseSolver._resolve_system.
-        return _build_molecule(atoms, basis, charge)
+        return _build_molecule(atoms, basis, charge, spin)
 
 
 def _build_molecule(atoms: list[dict], basis: str = "sto-3g", charge: int = 0, spin: int = 0):
@@ -43,14 +48,34 @@ def _build_molecule(atoms: list[dict], basis: str = "sto-3g", charge: int = 0, s
     return Molecule(atom_objs, charge=charge, spin=spin, basis=basis)
 
 
-def _build_pyscf_mol(atoms: list[dict], basis: str = "sto-3g", charge: int = 0):
-    """Build a PySCF mol object from atom list."""
+def _build_pyscf_mol(atoms: list[dict], basis: str = "sto-3g", charge: int = 0, spin: int = 0):
+    """Build a PySCF mol object from atom list. spin (=2S) sets the multiplicity so
+    open-shell molecules build the correct reference (else PySCF assumes closed-shell
+    and either errors on an odd electron count or computes the wrong state)."""
     from pyscf import gto
     atom_str = "; ".join(
         f'{a["symbol"]} {a["position"][0]} {a["position"][1]} {a["position"][2]}'
         for a in atoms
     )
-    return gto.M(atom=atom_str, basis=basis, charge=charge, verbose=0)
+    return gto.M(atom=atom_str, basis=basis, charge=charge, spin=spin, verbose=0)
+
+
+def _n_qubits_of(solver=None, res=None) -> Optional[int]:
+    """Best-effort qubit count for the result payload. Tries the result object, then
+    the solver's own n_qubits attributes, then 2 × active spin-orbitals from the
+    solver's Hamiltonian. Returns None when nothing exposes it (never raises)."""
+    for obj in (res, solver):
+        if obj is None:
+            continue
+        for a in ("n_qubits", "num_qubits", "_n_qubits"):
+            v = getattr(obj, a, None)
+            if isinstance(v, int) and v > 0:
+                return v
+    ham = getattr(solver, "hamiltonian", None)
+    no = getattr(ham, "n_orbitals", None) if ham is not None else None
+    if isinstance(no, int) and no > 0:
+        return 2 * no
+    return None
 
 
 # Partially-filled d/f shells → strong static correlation. AVAS on the valence
@@ -189,6 +214,8 @@ def run_calculation(job: dict, gpu_enabled: bool = False, gpu_device: str = "aut
         "n_evaluations": None,
         "converged": None,
         "convergence_history": None,
+        "n_qubits": None,
+        "solver_used": None,
         "wall_time_ms": None,
     }
 
@@ -197,6 +224,11 @@ def run_calculation(job: dict, gpu_enabled: bool = False, gpu_device: str = "aut
         basis = job.get("basis", "sto-3g")
         charge = job.get("charge", 0)
         solver_type = job.get("solver", "physics_vqe")
+        # Read spin (=2S, number of unpaired electrons) ONCE here so EVERY solver builds
+        # the correct multiplicity — previously only sampling_sqd/custom/dynamics read it,
+        # so open-shell molecules on any other solver silently dropped spin (crash on odd
+        # electron count, or the wrong closed-shell state).
+        spin = int(job.get("spin", 0) or 0)
         backend_type = job.get("backend", "statevector")
         max_iterations = job.get("max_iterations", 100)
         max_excitations = job.get("max_excitations", 5)
@@ -291,26 +323,24 @@ def run_calculation(job: dict, gpu_enabled: bool = False, gpu_device: str = "aut
             # Workshop custom solver packet (config-based) — route to its base solver.
             sol_result = _run_custom_solver(
                 atoms, basis, charge, _custom.get("base_type"), _custom.get("config"),
-                backend, gpu_device, spin=int(job.get("spin", 0) or 0),
+                backend, gpu_device, spin=spin,
                 ibm_token=job.get("ibm_api_token"), ibm_crn=ibm_crn, callback=_solver_cb, phase_cb=_phase)
         elif solver_type in ("physics_vqe", "smart"):
             sol_result = _run_physics_vqe(
                 atoms, basis, charge, backend,
-                max_iterations, max_excitations,
+                max_iterations, max_excitations, spin=spin,
                 ibm_token=job.get("ibm_api_token"),
                 ionq_key=job.get("ionq_api_key"),
                 callback=_solver_cb,
             )
         elif solver_type == "hardware_vqe":
             sol_result = _run_hardware_vqe(
-                atoms, basis, charge, backend,
-                ibm_token=job.get("ibm_api_token"),
+                atoms, basis, charge, backend, spin=spin,
                 callback=_solver_cb,
             )
         elif solver_type == "hybrid_subspace":
             sol_result = _run_hybrid_subspace(
-                atoms, basis, charge, backend,
-                ibm_token=job.get("ibm_api_token"),
+                atoms, basis, charge, backend, spin=spin,
             )
         elif solver_type == "sampling_sqd" or (solver_type == "sqd" and backend_type in ("ibm", "bluequbit")):
             # Hybrid SQD: quantum sampling (QPU via user's IBM key, or local
@@ -321,12 +351,15 @@ def run_calculation(job: dict, gpu_enabled: bool = False, gpu_device: str = "aut
             # falling back to statevector — so "I picked the QPU" means QPU-or-nothing, and
             # the reason the QPU couldn't be used is surfaced to the app instead of hidden.
             _force_qpu = bool(job.get("force_qpu"))
+            # Honor the requested shot count (top-level `shots` or config.shots); the
+            # sampler previously hardcoded 4000 regardless of what the user asked for.
+            _n_samples = int(job.get("shots") or (job.get("config") or {}).get("shots") or 4000)
             try:
                 sol_result = _run_sampling_sqd(
                     atoms, basis, charge, _samp, gpu_device,
                     ibm_token=job.get("ibm_api_token"), ibm_crn=ibm_crn,
                     ibm_backend=job.get("ibm_backend_name"),
-                    spin=int(job.get("spin", 0) or 0), phase_cb=_phase,
+                    n_samples=_n_samples, spin=spin, phase_cb=_phase,
                 )
                 # Record WHERE the state was actually sampled so the app never has to
                 # guess whether the QPU ran (the fallback below is otherwise invisible).
@@ -346,7 +379,7 @@ def run_calculation(job: dict, gpu_enabled: bool = False, gpu_device: str = "aut
                     sol_result = _run_sampling_sqd(
                         atoms, basis, charge, "statevector", gpu_device,
                         ibm_token=None, ibm_crn=None, ibm_backend=None,
-                        spin=int(job.get("spin", 0) or 0), phase_cb=_phase,
+                        n_samples=_n_samples, spin=spin, phase_cb=_phase,
                     )
                     sol_result["sampling_backend_used"] = "statevector"
                     sol_result["sampling_requested"] = _samp
@@ -358,27 +391,27 @@ def run_calculation(job: dict, gpu_enabled: bool = False, gpu_device: str = "aut
                 else:
                     raise
         elif solver_type == "sqd":
-            sol_result = _run_sqd(atoms, basis, charge)
+            sol_result = _run_sqd(atoms, basis, charge, spin=spin)
         elif solver_type == "krylov_sqd":
-            sol_result = _run_krylov_sqd(atoms, basis, charge)
+            sol_result = _run_krylov_sqd(atoms, basis, charge, spin=spin)
         elif solver_type == "vqe":
             sol_result = _run_vqe(
                 atoms, basis, charge, backend,
-                max_iterations, ansatz_type, callback=_solver_cb,
+                max_iterations, ansatz_type, spin=spin, callback=_solver_cb,
             )
         elif solver_type == "varqite":
-            sol_result = _run_varqite(atoms, basis, charge, ansatz_type)
+            sol_result = _run_varqite(atoms, basis, charge, ansatz_type, spin=spin)
         elif solver_type == "qeom":
-            sol_result = _run_qeom(atoms, basis, charge)
+            sol_result = _run_qeom(atoms, basis, charge, spin=spin)
         elif solver_type == "efficient_vqe":
-            sol_result = _run_efficient_vqe(atoms, basis, charge, max_iterations)
+            sol_result = _run_efficient_vqe(atoms, basis, charge, backend, max_iterations, spin=spin)
         elif solver_type == "excited_states":
-            sol_result = _run_excited_states(atoms, basis, charge)
+            sol_result = _run_excited_states(atoms, basis, charge, spin=spin)
         else:
             # Default to physics_vqe
             sol_result = _run_physics_vqe(
                 atoms, basis, charge, backend,
-                max_iterations, max_excitations,
+                max_iterations, max_excitations, spin=spin,
             )
 
         # Authoritative evaluation count for iterative (VQE-family) solvers: the
@@ -389,6 +422,12 @@ def run_calculation(job: dict, gpu_enabled: bool = False, gpu_device: str = "aut
         if _prog_state["max_iter"] and not sol_result.get("n_evaluations"):
             sol_result["n_evaluations"] = _prog_state["max_iter"]
         result.update(sol_result)
+        # Provenance for the app: which solver+backend actually ran (n_qubits is merged
+        # from the runner's payload via update above). Runners that report a richer value
+        # (e.g. sampling_sqd's "sampling_sqd[amd]", or the whole-workflow runners) keep
+        # theirs; every other solver gets the "{solver}[{backend}]" default.
+        if result.get("solver_used") is None:
+            result["solver_used"] = f"{solver_type}[{backend}]"
         # Compute error_mha if we have both energy and fci_energy
         if result.get("energy") and result.get("fci_energy") and result.get("error_mha") is None:
             result["error_mha"] = abs(result["energy"] - result["fci_energy"]) * 1000
@@ -740,12 +779,12 @@ def _run_materials(job: dict, gpu_device: str = "auto", progress_cb=None, cancel
 
 
 def _run_physics_vqe(
-    atoms, basis, charge, backend, max_iter, max_exc,
+    atoms, basis, charge, backend, max_iter, max_exc, spin=0,
     ibm_token=None, ionq_key=None, callback=None,
 ) -> dict:
     from kanad.solvers import PhysicsVQE
 
-    mol = _build_pyscf_mol(atoms, basis, charge)
+    mol = _build_pyscf_mol(atoms, basis, charge, spin)
     kwargs: dict[str, Any] = {"pyscf_mol": mol, "max_excitations": max_exc}
 
     if backend not in ("statevector", "aer"):
@@ -781,75 +820,101 @@ def _run_physics_vqe(
             for i, e in enumerate(solver._energy_history)
         ]
 
+    energy = float(res.energy)
+    fci = float(res.fci_energy) if getattr(res, "fci_energy", None) is not None else None
+    # Honest convergence: PhysicsVQE can report converged=False even when it landed on the
+    # exact FCI energy (its optimizer-stall flag). Treat "within chemical accuracy of FCI"
+    # as converged so the UI doesn't mislabel a perfect result as not-converged.
+    converged = bool(getattr(res, "converged", True))
+    if not converged and fci is not None and abs(energy - fci) < 1.6e-3:
+        converged = True
+
     return {
-        "energy": float(res.energy),
-        "hf_energy": float(res.hf_energy) if hasattr(res, "hf_energy") else None,
-        "fci_energy": float(res.fci_energy) if hasattr(res, "fci_energy") else None,
-        "error_mha": float(res.error_mha) if hasattr(res, "error_mha") else None,
-        "n_evaluations": int(res.n_evaluations) if hasattr(res, "n_evaluations") else None,
-        "converged": bool(getattr(res, "converged", True)),
+        "energy": energy,
+        "hf_energy": float(res.hf_energy) if getattr(res, "hf_energy", None) is not None else None,
+        "fci_energy": fci,
+        "error_mha": float(res.error_mha) if getattr(res, "error_mha", None) is not None else None,
+        "n_evaluations": int(res.n_evaluations) if getattr(res, "n_evaluations", None) is not None else None,
+        "converged": converged,
         "convergence_history": history or None,
+        "n_qubits": _n_qubits_of(solver, res),
     }
 
 
-def _run_hardware_vqe(atoms, basis, charge, backend, ibm_token=None, callback=None) -> dict:
+def _run_hardware_vqe(atoms, basis, charge, backend, spin=0, callback=None) -> dict:
+    """HardwareVQE (shallow HEA) run LOCALLY on the node's statevector engine.
+
+    The former IBM branch was dead and broken: run_calculation passes the RESOLVED
+    statevector backend (never 'ibm_quantum'), so the branch was unreachable, AND it
+    called solver.solve_hardware(IBMBackend_object) while solve_hardware actually takes a
+    backend-NAME string — so it could not have worked even if reached. Real QPU execution
+    lives in the SQD path (sampling_sqd, which properly wires the user's IBM token). This
+    runner is honestly local-only rather than silently downgrading an 'ibm' request."""
     from kanad.solvers import HardwareVQE
 
-    bond = _build_bond(atoms, basis, charge)
+    bond = _build_bond(atoms, basis, charge, spin)
     solver = HardwareVQE(bond=bond, circuit_type="hea")
-
-    if backend == "ibm_quantum" and ibm_token:
-        from kanad.backends.ibm import IBMBackend
-        ibm = IBMBackend(api_token=ibm_token)
-        res = solver.solve_hardware(ibm)
-    else:
-        res = solver.solve_local()
+    res = solver.solve_local()
 
     return {
         "energy": float(res.energy),
-        "error_mha": float(getattr(res, "error_mha", 0)),
-        "n_evaluations": int(getattr(res, "n_evaluations", 0)),
+        "error_mha": float(getattr(res, "error_mha", 0) or 0),
+        "n_evaluations": int(getattr(res, "n_evaluations", 0) or 0),
         "converged": True,
+        "n_qubits": _n_qubits_of(solver, res),
     }
 
 
-def _run_hybrid_subspace(atoms, basis, charge, backend, ibm_token=None) -> dict:
-    from kanad.solvers import HybridSubspaceVQE
+def _run_hybrid_subspace(atoms, basis, charge, backend, spin=0) -> dict:
+    """'hybrid_subspace' → SampledSubspaceVQE. HybridSubspaceVQE was RETIRED in kanad
+    0.1.2 (the import crashed for every molecule); SampledSubspaceVQE is its successor and
+    reaches exact FCI on H2 (verified 0.00 mHa). The first positional arg is `system`, so
+    pass the bond positionally (a `bond=` kwarg would be swallowed into **backend_kwargs)."""
+    from kanad.solvers import SampledSubspaceVQE
 
-    bond = _build_bond(atoms, basis, charge)
-    solver = HybridSubspaceVQE(bond=bond)
+    bond = _build_bond(atoms, basis, charge, spin)
+    sv = backend if backend in ("statevector", "aer") else "statevector"
+    solver = SampledSubspaceVQE(bond, backend=sv)
     res = solver.solve()
 
+    fci = getattr(res, "fci_energy", None)
     return {
         "energy": float(res.energy),
-        "fci_energy": float(getattr(res, "fci_energy", 0)),
-        "error_mha": float(getattr(res, "error_mha", 0)),
-        "n_evaluations": int(getattr(res, "n_evaluations", 0)),
+        "fci_energy": float(fci) if fci is not None else None,
+        "error_mha": float(getattr(res, "error_mha", 0) or 0),
+        "n_evaluations": int(getattr(res, "n_evaluations", 0) or 0),
         "converged": True,
+        "n_qubits": _n_qubits_of(solver, res),
     }
 
 
-def _run_sqd(atoms, basis, charge) -> dict:
+def _run_sqd(atoms, basis, charge, spin=0) -> dict:
     from kanad.solvers import SQDSolver
-    bond = _build_bond(atoms, basis, charge)
-    solver = SQDSolver(bond=bond)
+    bond = _build_bond(atoms, basis, charge, spin)
+    # SQDSolver's first arg is `bond_or_molecule` (positional); a `bond=` kwarg is
+    # swallowed into **kwargs → the system stays None → crash. Pass it positionally.
+    solver = SQDSolver(bond)
     res = solver.solve()
     return {
         "energy": float(res.energy),
-        "error_mha": float(getattr(res, "error_mha", 0)),
+        "error_mha": float(getattr(res, "error_mha", 0) or 0),
         "converged": True,
+        "n_qubits": _n_qubits_of(solver, res),
     }
 
 
-def _run_krylov_sqd(atoms, basis, charge) -> dict:
+def _run_krylov_sqd(atoms, basis, charge, spin=0) -> dict:
     from kanad.solvers import KrylovSQDSolver
-    bond = _build_bond(atoms, basis, charge)
-    solver = KrylovSQDSolver(bond=bond)
+    bond = _build_bond(atoms, basis, charge, spin)
+    # KrylovSQDSolver (== LanczosSolver) takes `system` positionally; `bond=` is swallowed
+    # into **backend_kwargs → system stays None → crash. Pass it positionally.
+    solver = KrylovSQDSolver(bond)
     res = solver.solve()
     return {
         "energy": float(res.energy),
-        "error_mha": float(getattr(res, "error_mha", 0)),
+        "error_mha": float(getattr(res, "error_mha", 0) or 0),
         "converged": True,
+        "n_qubits": _n_qubits_of(solver, res),
     }
 
 
@@ -1033,6 +1098,7 @@ def _run_sampling_sqd(atoms, basis, charge, sampling_backend, gpu_device,
         "energy_history": [float(e) for e in _hist] or None,
         "converged": True,
         "solver_used": f"sampling_sqd[{dev}]",
+        "n_qubits": (int(as_info["active_qubits"]) if as_info else int(2 * ham.n_orbitals)),
         # When a valence active space was applied (TM dimers/clusters), report it so
         # the result is honest about what was actually diagonalized (vs the full system).
         "active_space": as_info,
@@ -1042,13 +1108,17 @@ def _run_sampling_sqd(atoms, basis, charge, sampling_backend, gpu_device,
     }
 
 
-_VQE_OK_ANSATZE = {'hardware_efficient', 'real_amplitudes', 'efficient_su2', 'two_local'}
+# Ansatz types VQESolver 0.1.2 actually constructs without raising. Verified: only
+# 'hardware_efficient' (exact for H2) and 'givens' run; 'real_amplitudes'/'efficient_su2'/
+# 'two_local' raise ValueError('Unknown ansatz type'), and 'physics_driven' raises
+# NotImplementedError — so anything else is clamped to 'hardware_efficient' below.
+_VQE_OK_ANSATZE = {'hardware_efficient', 'givens'}
 
 
 def _run_vqe(atoms, basis, charge, backend, max_iter, ansatz_type,
-             optimizer=None, mapper_type=None, callback=None) -> dict:
+             spin=0, optimizer=None, mapper_type=None, callback=None) -> dict:
     from kanad.solvers import VQESolver
-    bond = _build_bond(atoms, basis, charge)
+    bond = _build_bond(atoms, basis, charge, spin)
     # Framework 0.1.2 VQESolver rejects physics_driven/governance/ucc/* — clamp any
     # unsupported type (incl. the schema default 'physics_driven') so the node never crashes.
     if ansatz_type not in _VQE_OK_ANSATZE:
@@ -1069,6 +1139,7 @@ def _run_vqe(atoms, basis, charge, backend, max_iter, ansatz_type,
         "energy": float(d["energy"]),
         "n_evaluations": int(d.get("n_evaluations", 0) or 0),
         "converged": bool(d.get("converged", True)),
+        "n_qubits": _n_qubits_of(solver, res),
     }
 
 
@@ -1090,65 +1161,126 @@ def _run_custom_solver(atoms, basis, charge, base_type, config, backend, gpu_dev
     if bt == "physics":
         r = _run_physics_vqe(atoms, basis, charge, backend,
                              int(cfg.get("max_iterations", 100)), int(cfg.get("max_excitations", 5)),
-                             ibm_token=ibm_token, callback=callback)
+                             spin=spin, ibm_token=ibm_token, callback=callback)
     elif bt == "subspace":
         r = _run_sampling_sqd(atoms, basis, charge,
                               ("ibm" if backend == "ibm" else "statevector"), gpu_device,
                               ibm_token=ibm_token, ibm_crn=ibm_crn,
                               n_samples=int(cfg.get("n_samples", 4000)), spin=spin, phase_cb=phase_cb)
     elif bt == "time_evolution":
-        r = _run_varqite(atoms, basis, charge, cfg.get("ansatz_type", "hardware_efficient"))
+        r = _run_varqite(atoms, basis, charge, cfg.get("ansatz_type", "hardware_efficient"), spin=spin)
     else:  # vqe / custom
         r = _run_vqe(atoms, basis, charge, backend, int(cfg.get("max_iterations", 100)),
-                     cfg.get("ansatz_type", "hardware_efficient"),
+                     cfg.get("ansatz_type", "hardware_efficient"), spin=spin,
                      optimizer=cfg.get("optimizer"), mapper_type=cfg.get("mapper_type"), callback=callback)
     r["solver_used"] = "custom:%s[%s]" % (bt, r.get("solver_used") or backend)
     return r
 
 
-def _run_varqite(atoms, basis, charge, ansatz_type) -> dict:
+def _run_varqite(atoms, basis, charge, ansatz_type, spin=0) -> dict:
     from kanad.solvers import VarQITESolver
-    bond = _build_bond(atoms, basis, charge)
-    solver = VarQITESolver(bond=bond)
+    bond = _build_bond(atoms, basis, charge, spin)
+    # VarQITESolver's first arg is `system` (positional); `bond=` is swallowed into
+    # **backend_kwargs → system stays None → crash. Pass it positionally.
+    solver = VarQITESolver(bond, ansatz_type=(ansatz_type or "hardware_efficient"))
     # max_tau=2.0 converges H2 to ~0 mHa in ~50s; the default (10.0) runs the adaptive
     # integrator for minutes. Keep the dtau fine (0.1) — the fixed-step path is unstable.
     res = solver.solve(max_tau=2.0, dtau=0.1)
     return {
         "energy": float(res.energy),
         "converged": bool(getattr(res, "converged", True)),
+        "n_qubits": _n_qubits_of(solver, res),
     }
 
 
-def _run_qeom(atoms, basis, charge) -> dict:
+def _run_qeom(atoms, basis, charge, spin=0) -> dict:
     from kanad.solvers import qEOMVQE
-    bond = _build_bond(atoms, basis, charge)
-    solver = qEOMVQE(bond=bond)
+    bond = _build_bond(atoms, basis, charge, spin)
+    # qEOMVQE's first arg is `system` (positional); `bond=` is swallowed into
+    # **backend_kwargs → system stays None → crash. Pass it positionally.
+    solver = qEOMVQE(bond)
     res = solver.solve()
     return {
         "energy": float(res.energy),
         "converged": True,
+        "n_qubits": _n_qubits_of(solver, res),
     }
 
 
-def _run_efficient_vqe(atoms, basis, charge, max_iter) -> dict:
-    from kanad.solvers import EfficientVQE
-    bond = _build_bond(atoms, basis, charge)
-    solver = EfficientVQE(bond=bond)
-    res = solver.solve()
-    return {
-        "energy": float(res.energy),
-        "error_mha": float(getattr(res, "error_mha", 0)),
-        "n_evaluations": int(getattr(res, "n_evaluations", 0)),
-        "converged": True,
-    }
+def _run_efficient_vqe(atoms, basis, charge, backend, max_iter, spin=0) -> dict:
+    # There is no standalone 'EfficientVQE' class in kanad 0.1.2 (the import crashed);
+    # 'efficient_vqe' is VQESolver with a hardware-efficient ansatz (the only shallow
+    # ansatz VQESolver 0.1.2 accepts — 'efficient_su2'/'two_local' raise). Route there.
+    return _run_vqe(atoms, basis, charge, backend, max_iter, "hardware_efficient", spin=spin)
 
 
-def _run_excited_states(atoms, basis, charge) -> dict:
+def _run_excited_states(atoms, basis, charge, spin=0) -> dict:
     from kanad.solvers import ExcitedStatesSolver
-    bond = _build_bond(atoms, basis, charge)
-    solver = ExcitedStatesSolver(bond=bond)
+    bond = _build_bond(atoms, basis, charge, spin)
+    # ExcitedStatesSolver's first arg is `system` (positional); `bond=` is swallowed into
+    # **kwargs → system stays None → crash. Pass it positionally.
+    solver = ExcitedStatesSolver(bond)
     res = solver.solve()
     return {
-        "energy": float(res.ground_energy) if hasattr(res, "ground_energy") else float(res.energy),
+        "energy": float(res.ground_energy) if getattr(res, "ground_energy", None) is not None else float(res.energy),
         "converged": True,
+        "n_qubits": _n_qubits_of(solver, res),
     }
+
+
+# ─────────── Smoke test ───────────
+
+# Every single-point solver run_calculation dispatches to (the 'energy' kind). Kept in
+# sync with the run_calculation dispatch so the smoke test exercises the real code path.
+SMOKE_SOLVERS = [
+    "physics_vqe", "smart", "vqe", "hardware_vqe", "hybrid_subspace",
+    "sqd", "sampling_sqd", "krylov_sqd", "varqite", "qeom",
+    "efficient_vqe", "excited_states",
+]
+
+
+def smoke_test_all_solvers(atoms=None, basis="sto-3g", backend="statevector",
+                           solvers=None, verbose=True) -> dict:
+    """Instantiate + run EVERY solver run_calculation supports on H2/sto-3g/statevector
+    (by default) through the real run_calculation entry, asserting each returns a finite
+    energy (no crash). Returns {solver: {status, energy, n_qubits, error_message}}.
+
+    Runnable standalone:
+        PYTHONPATH=... python -c 'from kanad_compute.worker import smoke_test_all_solvers as s; s()'
+    Raises AssertionError listing any solver that crashed or returned a non-finite energy."""
+    import math as _math
+    if atoms is None:
+        atoms = [{"symbol": "H", "position": [0.0, 0.0, 0.0]},
+                 {"symbol": "H", "position": [0.0, 0.0, 0.74]}]
+    solvers = solvers or SMOKE_SOLVERS
+    out: dict[str, dict] = {}
+    failures: list[str] = []
+    for s in solvers:
+        job = {
+            "atoms": atoms, "basis": basis, "charge": 0, "spin": 0,
+            "solver": s, "backend": backend,
+            # keep iterative solvers short so the smoke test finishes quickly
+            "max_iterations": 30, "max_excitations": 5,
+        }
+        res = run_calculation(job)
+        e = res.get("energy")
+        finite = isinstance(e, (int, float)) and _math.isfinite(e)
+        ok = res.get("status") == "completed" and finite
+        out[s] = {
+            "status": res.get("status"),
+            "energy": e,
+            "n_qubits": res.get("n_qubits"),
+            "solver_used": res.get("solver_used"),
+            "error_message": res.get("error_message"),
+        }
+        if verbose:
+            tag = "OK " if ok else "FAIL"
+            logger.info("[smoke] %-14s %s E=%s nq=%s %s", s, tag, e, res.get("n_qubits"),
+                        "" if ok else f"({res.get('error_message')})")
+            print(f"[smoke] {s:14s} {tag} E={e} nq={res.get('n_qubits')}"
+                  + ("" if ok else f"  ERROR: {res.get('error_message')}"))
+        if not ok:
+            failures.append(f"{s}: status={res.get('status')} energy={e} err={res.get('error_message')}")
+    if failures:
+        raise AssertionError("smoke_test_all_solvers failures:\n  " + "\n  ".join(failures))
+    return out
