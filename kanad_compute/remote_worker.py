@@ -74,23 +74,13 @@ def start_worker(kanad_url: str, config: dict, status: dict = None):
             result = _execute_job(job, config)
             entry["status"] = "completed"
             entry["energy"] = result.get("energy")
-            # sampling_backend_used / _requested / _fallback_reason tell the app WHERE an SQD
-            # job actually sampled (QPU vs statevector) so a silent fallback is never mistaken
-            # for a real QPU run.
-            result_payload = {
-                "energy": result.get("energy"),
-                "hf_energy": result.get("hf_energy"),
-                "fci_energy": result.get("fci_energy"),
-                "error_mha": result.get("error_mha"),
-                "n_evaluations": result.get("n_evaluations"),
-                "converged": result.get("converged", True),
-                "convergence_history": result.get("convergence_history"),
-                "wall_time": result.get("wall_time"),
-                "sampling_backend_used": result.get("sampling_backend_used"),
-                "sampling_requested": result.get("sampling_requested"),
-                "sampling_fallback_reason": result.get("sampling_fallback_reason"),
-                "status": "completed",
-            }
+            # Forward the FULL result dict so WHOLE-WORKFLOW jobs survive — dynamics
+            # (trajectory / n_steps_completed / avg_temperature), reaction (pes_points),
+            # materials (bands/dos) — not just the energy-calc fields. Previously only the
+            # energy subset was sent, so a dynamics run posted an energy-shaped result with no
+            # trajectory (the app saw 0 steps). run_calculation already returns JSON-safe values
+            # (numpy → lists), and sampling_backend_used etc. are part of that dict for SQD jobs.
+            result_payload = {**result, "status": "completed"}
             try:
                 if result.get("sampling_backend_used"):
                     entry["backend"] = result["sampling_backend_used"]
@@ -99,7 +89,7 @@ def start_worker(kanad_url: str, config: dict, status: dict = None):
             try:
                 push_resp = httpx.post(
                     f"{kanad_url}/api/compute/jobs/{job_id}/result",
-                    json=result_payload, headers=headers, timeout=10,
+                    json=result_payload, headers=headers, timeout=30,
                 )
                 if push_resp.status_code == 200:
                     logger.info(f"Job {job_id[:8]} completed — E = {result.get('energy', '?')}")
