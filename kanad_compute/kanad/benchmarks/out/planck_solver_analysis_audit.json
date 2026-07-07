@@ -1,0 +1,302 @@
+[
+  {
+    "solver": "VQESolver",
+    "molecule": "H2",
+    "backend": "statevector",
+    "energy": -1.1372838142767256,
+    "converged": true,
+    "hf_energy": -1.1167593073964253,
+    "convergence_warning": null,
+    "method": null,
+    "analysis_checks": {
+      "analysis_present": true,
+      "energy_components_self_consistent": true,
+      "bond_orders_error": "TypeError: only 0-dimensional arrays can be converted to Python scalars",
+      "dipole_nonneg_finite": true
+    },
+    "n_excited": null,
+    "ok": true,
+    "t": 2.41
+  },
+  {
+    "solver": "VQESolver",
+    "molecule": "H2",
+    "backend": "planck",
+    "energy": -1.1372837297633887,
+    "converged": true,
+    "hf_energy": -1.1167593073964253,
+    "convergence_warning": null,
+    "method": null,
+    "analysis_checks": {
+      "analysis_present": true,
+      "energy_components_self_consistent": true,
+      "bond_orders_error": "TypeError: only 0-dimensional arrays can be converted to Python scalars",
+      "dipole_nonneg_finite": true
+    },
+    "n_excited": null,
+    "ok": true,
+    "t": 1.52
+  },
+  {
+    "solver": "VQESolver",
+    "molecule": "LiH",
+    "backend": "statevector",
+    "energy": -5.140907471235035,
+    "converged": false,
+    "hf_energy": -7.861864769809256,
+    "convergence_warning": "VQE energy -5.140907 Ha is ABOVE the HF reference -7.861865 Ha (\u0394=+2720.96 mHa): the optimizer did not reach a correlated state. Result is unreliable \u2014 increase max_iterations or use optimizer='L-BFGS-B'.",
+    "method": null,
+    "analysis_checks": {
+      "analysis_present": true,
+      "energy_components_self_consistent": true,
+      "bond_orders_error": "TypeError: only 0-dimensional arrays can be converted to Python scalars",
+      "dipole_nonneg_finite": true
+    },
+    "n_excited": null,
+    "ok": true,
+    "t": 231.97
+  },
+  {
+    "solver": "VQESolver",
+    "molecule": "LiH",
+    "backend": "planck",
+    "energy": -5.60131080765378,
+    "converged": false,
+    "hf_energy": -7.861864769809256,
+    "convergence_warning": "VQE energy -5.601311 Ha is ABOVE the HF reference -7.861865 Ha (\u0394=+2260.55 mHa): the optimizer did not reach a correlated state. Result is unreliable \u2014 increase max_iterations or use optimizer='L-BFGS-B'.",
+    "method": null,
+    "analysis_checks": {
+      "analysis_present": true,
+      "energy_components_self_consistent": true,
+      "bond_orders_error": "TypeError: only 0-dimensional arrays can be converted to Python scalars",
+      "dipole_nonneg_finite": true
+    },
+    "n_excited": null,
+    "ok": true,
+    "t": 146.85
+  },
+  {
+    "solver": "VQESolver",
+    "molecule": "H2O",
+    "backend": "statevector",
+    "energy": -29.868693638548695,
+    "converged": false,
+    "hf_energy": -74.96270660885384,
+    "convergence_warning": "VQE energy -29.868694 Ha is ABOVE the HF reference -74.962707 Ha (\u0394=+45094.01 mHa): the optimizer did not reach a correlated state. Result is unreliable \u2014 increase max_iterations or use optimizer='L-BFGS-B'.",
+    "method": null,
+    "analysis_checks": {
+      "analysis_present": false
+    },
+    "n_excited": null,
+    "ok": true,
+    "t": 316.11
+  },
+  {
+    "solver": "VQESolver",
+    "molecule": "H2O",
+    "backend": "planck",
+    "energy": -34.84711994757435,
+    "converged": false,
+    "hf_energy": -74.96270660885384,
+    "convergence_warning": "VQE energy -34.847120 Ha is ABOVE the HF reference -74.962707 Ha (\u0394=+40115.59 mHa): the optimizer did not reach a correlated state. Result is unreliable \u2014 increase max_iterations or use optimizer='L-BFGS-B'.",
+    "method": null,
+    "analysis_checks": {
+      "analysis_present": false
+    },
+    "n_excited": null,
+    "ok": true,
+    "t": 166.41
+  },
+  {
+    "solver": "PhysicsVQE",
+    "molecule": "H2",
+    "backend": "statevector",
+    "energy": -1.137283834487639,
+    "converged": true,
+    "hf_energy": -1.1167593073964255,
+    "convergence_warning": null,
+    "method": null,
+    "analysis_checks": {
+      "analysis_present": false
+    },
+    "n_excited": null,
+    "ok": true,
+    "t": 0.29
+  },
+  {
+    "solver": "PhysicsVQE",
+    "molecule": "H2",
+    "backend": "planck",
+    "energy": -1.1372838344876477,
+    "converged": true,
+    "hf_energy": -1.1167593073964255,
+    "convergence_warning": null,
+    "method": null,
+    "analysis_checks": {
+      "analysis_present": false
+    },
+    "n_excited": null,
+    "ok": true,
+    "t": 0.13
+  },
+  {
+    "solver": "PhysicsVQE",
+    "molecule": "LiH",
+    "backend": "statevector",
+    "energy": -7.881664117433857,
+    "converged": true,
+    "hf_energy": -7.861864769808656,
+    "convergence_warning": null,
+    "method": null,
+    "analysis_checks": {
+      "analysis_present": false
+    },
+    "n_excited": null,
+    "ok": true,
+    "t": 6.81
+  },
+  {
+    "solver": "PhysicsVQE",
+    "molecule": "LiH",
+    "backend": "planck",
+    "energy": -7.8816641174342195,
+    "converged": true,
+    "hf_energy": -7.86186476980865,
+    "convergence_warning": null,
+    "method": null,
+    "analysis_checks": {
+      "analysis_present": false
+    },
+    "n_excited": null,
+    "ok": true,
+    "t": 5.28
+  },
+  {
+    "solver": "PhysicsVQE",
+    "molecule": "H2O",
+    "backend": "statevector",
+    "energy": -74.9868681566312,
+    "converged": true,
+    "hf_energy": -74.96270660885386,
+    "convergence_warning": null,
+    "method": null,
+    "analysis_checks": {
+      "analysis_present": false
+    },
+    "n_excited": null,
+    "ok": true,
+    "t": 8.48
+  },
+  {
+    "solver": "PhysicsVQE",
+    "molecule": "H2O",
+    "backend": "planck",
+    "energy": -74.9868681566344,
+    "converged": true,
+    "hf_energy": -74.96270660885386,
+    "convergence_warning": null,
+    "method": null,
+    "analysis_checks": {
+      "analysis_present": false
+    },
+    "n_excited": null,
+    "ok": true,
+    "t": 6.46
+  },
+  {
+    "solver": "ExcitedStates",
+    "molecule": "H2",
+    "backend": "statevector",
+    "energy": -1.1167593073964253,
+    "converged": true,
+    "hf_energy": null,
+    "convergence_warning": null,
+    "method": "CIS",
+    "analysis_checks": {
+      "analysis_present": false
+    },
+    "n_excited": 1,
+    "ok": true,
+    "t": 0.0
+  },
+  {
+    "solver": "ExcitedStates",
+    "molecule": "H2",
+    "backend": "planck",
+    "energy": -1.1167593073964253,
+    "converged": true,
+    "hf_energy": null,
+    "convergence_warning": null,
+    "method": "CIS",
+    "analysis_checks": {
+      "analysis_present": false
+    },
+    "n_excited": 1,
+    "ok": true,
+    "t": 0.0
+  },
+  {
+    "solver": "ExcitedStates",
+    "molecule": "LiH",
+    "backend": "statevector",
+    "energy": -7.861864769809256,
+    "converged": true,
+    "hf_energy": null,
+    "convergence_warning": null,
+    "method": "CIS",
+    "analysis_checks": {
+      "analysis_present": false
+    },
+    "n_excited": 2,
+    "ok": true,
+    "t": 0.01
+  },
+  {
+    "solver": "ExcitedStates",
+    "molecule": "LiH",
+    "backend": "planck",
+    "energy": -7.861864769809256,
+    "converged": true,
+    "hf_energy": null,
+    "convergence_warning": null,
+    "method": "CIS",
+    "analysis_checks": {
+      "analysis_present": false
+    },
+    "n_excited": 2,
+    "ok": true,
+    "t": 0.02
+  },
+  {
+    "solver": "ExcitedStates",
+    "molecule": "H2O",
+    "backend": "statevector",
+    "energy": -74.96270660885384,
+    "converged": true,
+    "hf_energy": null,
+    "convergence_warning": null,
+    "method": "CIS (PySCF TDA)",
+    "analysis_checks": {
+      "analysis_present": false
+    },
+    "n_excited": 2,
+    "ok": true,
+    "t": 0.03
+  },
+  {
+    "solver": "ExcitedStates",
+    "molecule": "H2O",
+    "backend": "planck",
+    "energy": -74.96270660885386,
+    "converged": true,
+    "hf_energy": null,
+    "convergence_warning": null,
+    "method": "CIS (PySCF TDA)",
+    "analysis_checks": {
+      "analysis_present": false
+    },
+    "n_excited": 2,
+    "ok": true,
+    "t": 0.03
+  }
+]

@@ -1,0 +1,507 @@
+[
+  {
+    "solver": "VQESolver",
+    "molecule": "h2",
+    "backend": "statevector",
+    "backend_obj": "StatevectorBackend",
+    "backend_name": "statevector",
+    "energy": -1.0682919351615352,
+    "conformance": [],
+    "ok": true,
+    "t": 0.76
+  },
+  {
+    "solver": "VQESolver",
+    "molecule": "h2",
+    "backend": "planck",
+    "backend_obj": "PlanckBackend",
+    "backend_name": "planck",
+    "energy": -1.1257465772338822,
+    "conformance": [],
+    "ok": true,
+    "t": 0.35
+  },
+  {
+    "solver": "VQESolver",
+    "molecule": "lih",
+    "backend": "statevector",
+    "backend_obj": "StatevectorBackend",
+    "backend_name": "statevector",
+    "energy": -5.107576424518174,
+    "conformance": [],
+    "ok": true,
+    "t": 1.99
+  },
+  {
+    "solver": "VQESolver",
+    "molecule": "lih",
+    "backend": "planck",
+    "backend_obj": "PlanckBackend",
+    "backend_name": "planck",
+    "energy": -6.044719927580486,
+    "conformance": [],
+    "ok": true,
+    "t": 24.32
+  },
+  {
+    "solver": "VQESolver",
+    "molecule": "h2o",
+    "backend": "statevector",
+    "backend_obj": "StatevectorBackend",
+    "backend_name": "statevector",
+    "energy": -39.48229010452318,
+    "conformance": [],
+    "ok": true,
+    "t": 5.76
+  },
+  {
+    "solver": "VQESolver",
+    "molecule": "h2o",
+    "backend": "planck",
+    "backend_obj": "PlanckBackend",
+    "backend_name": "planck",
+    "energy": -67.55568938044857,
+    "conformance": [],
+    "ok": true,
+    "t": 59.38
+  },
+  {
+    "solver": "PhysicsVQE",
+    "molecule": "h2",
+    "backend": "statevector",
+    "backend_obj": "StatevectorBackend",
+    "backend_name": "statevector",
+    "energy": -1.137283834487639,
+    "conformance": [],
+    "ok": true,
+    "t": 1.03
+  },
+  {
+    "solver": "PhysicsVQE",
+    "molecule": "h2",
+    "backend": "planck",
+    "backend_obj": "PlanckBackend",
+    "backend_name": "planck",
+    "energy": -1.1372838344876477,
+    "conformance": [],
+    "ok": true,
+    "t": 0.19
+  },
+  {
+    "solver": "PhysicsVQE",
+    "molecule": "lih",
+    "backend": "statevector",
+    "backend_obj": "StatevectorBackend",
+    "backend_name": "statevector",
+    "energy": -7.8777751091894395,
+    "conformance": [],
+    "ok": true,
+    "t": 2.88
+  },
+  {
+    "solver": "PhysicsVQE",
+    "molecule": "lih",
+    "backend": "planck",
+    "backend_obj": "PlanckBackend",
+    "backend_name": "planck",
+    "energy": -7.877775109189645,
+    "conformance": [],
+    "ok": true,
+    "t": 2.55
+  },
+  {
+    "solver": "PhysicsVQE",
+    "molecule": "h2o",
+    "backend": "statevector",
+    "backend_obj": "StatevectorBackend",
+    "backend_name": "statevector",
+    "energy": -74.98311727945783,
+    "conformance": [],
+    "ok": true,
+    "t": 4.52
+  },
+  {
+    "solver": "PhysicsVQE",
+    "molecule": "h2o",
+    "backend": "planck",
+    "backend_obj": "PlanckBackend",
+    "backend_name": "planck",
+    "energy": -74.98311727946022,
+    "conformance": [],
+    "ok": true,
+    "t": 3.86
+  },
+  {
+    "solver": "SamplingSQD",
+    "molecule": "h2",
+    "backend": "statevector",
+    "backend_obj": "StatevectorBackend",
+    "backend_name": "statevector",
+    "energy": -1.1167593073964261,
+    "conformance": [],
+    "ok": true,
+    "t": 0.06
+  },
+  {
+    "solver": "SamplingSQD",
+    "molecule": "h2",
+    "backend": "planck",
+    "ok": false,
+    "error": "ValueError: backend must be 'statevector', 'qasm', 'bluequbit', or 'ibm'; got 'planck'",
+    "trace": [
+      "                                                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+      "  File \"/root/kanad/solvers/sampling_sqd.py\", line 359, in __init__",
+      "    raise ValueError(",
+      "ValueError: backend must be 'statevector', 'qasm', 'bluequbit', or 'ibm'; got 'planck'"
+    ],
+    "t": 0.0
+  },
+  {
+    "solver": "SamplingSQD",
+    "molecule": "lih",
+    "backend": "statevector",
+    "backend_obj": "StatevectorBackend",
+    "backend_name": "statevector",
+    "energy": -7.86186476980865,
+    "conformance": [],
+    "ok": true,
+    "t": 0.07
+  },
+  {
+    "solver": "SamplingSQD",
+    "molecule": "lih",
+    "backend": "planck",
+    "ok": false,
+    "error": "ValueError: backend must be 'statevector', 'qasm', 'bluequbit', or 'ibm'; got 'planck'",
+    "trace": [
+      "                                                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+      "  File \"/root/kanad/solvers/sampling_sqd.py\", line 359, in __init__",
+      "    raise ValueError(",
+      "ValueError: backend must be 'statevector', 'qasm', 'bluequbit', or 'ibm'; got 'planck'"
+    ],
+    "t": 0.0
+  },
+  {
+    "solver": "SamplingSQD",
+    "molecule": "h2o",
+    "backend": "statevector",
+    "backend_obj": "StatevectorBackend",
+    "backend_name": "statevector",
+    "energy": -74.96270660885384,
+    "conformance": [],
+    "ok": true,
+    "t": 0.09
+  },
+  {
+    "solver": "SamplingSQD",
+    "molecule": "h2o",
+    "backend": "planck",
+    "ok": false,
+    "error": "ValueError: backend must be 'statevector', 'qasm', 'bluequbit', or 'ibm'; got 'planck'",
+    "trace": [
+      "                                                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+      "  File \"/root/kanad/solvers/sampling_sqd.py\", line 359, in __init__",
+      "    raise ValueError(",
+      "ValueError: backend must be 'statevector', 'qasm', 'bluequbit', or 'ibm'; got 'planck'"
+    ],
+    "t": 0.03
+  },
+  {
+    "solver": "VarQITE",
+    "molecule": "h2",
+    "backend": "statevector",
+    "backend_obj": "StatevectorBackend",
+    "backend_name": "statevector",
+    "energy": -1.1372838343807747,
+    "conformance": [],
+    "ok": true,
+    "t": 112.23
+  },
+  {
+    "solver": "VarQITE",
+    "molecule": "h2",
+    "backend": "planck",
+    "backend_obj": "PlanckBackend",
+    "backend_name": "planck",
+    "energy": -1.137283833697458,
+    "conformance": [],
+    "ok": true,
+    "t": 415.86
+  },
+  {
+    "solver": "qEOMVQE",
+    "molecule": "h2",
+    "backend": "statevector",
+    "backend_obj": "StatevectorBackend",
+    "backend_name": "statevector",
+    "energy": -1.1372838317328156,
+    "conformance": [],
+    "ok": true,
+    "t": 1.12
+  },
+  {
+    "solver": "qEOMVQE",
+    "molecule": "h2",
+    "backend": "planck",
+    "backend_obj": "PlanckBackend",
+    "backend_name": "planck",
+    "energy": -1.137283831732826,
+    "conformance": [],
+    "ok": true,
+    "t": 0.89
+  },
+  {
+    "solver": "qEOMVQE",
+    "molecule": "lih",
+    "backend": "statevector",
+    "backend_obj": "StatevectorBackend",
+    "backend_name": "statevector",
+    "energy": -7.882077534116365,
+    "conformance": [],
+    "ok": true,
+    "t": 12.04
+  },
+  {
+    "solver": "qEOMVQE",
+    "molecule": "lih",
+    "backend": "planck",
+    "backend_obj": "PlanckBackend",
+    "backend_name": "planck",
+    "energy": -7.882077534116634,
+    "conformance": [],
+    "ok": true,
+    "t": 10.34
+  },
+  {
+    "solver": "qEOMVQE",
+    "molecule": "h2o",
+    "backend": "statevector",
+    "backend_obj": "StatevectorBackend",
+    "backend_name": "statevector",
+    "energy": -74.99600006973998,
+    "conformance": [],
+    "ok": true,
+    "t": 74.67
+  },
+  {
+    "solver": "qEOMVQE",
+    "molecule": "h2o",
+    "backend": "planck",
+    "backend_obj": "PlanckBackend",
+    "backend_name": "planck",
+    "energy": -74.99558904354124,
+    "conformance": [],
+    "ok": true,
+    "t": 72.0
+  },
+  {
+    "solver": "SampledSubspaceVQE",
+    "molecule": "h2",
+    "backend": "statevector",
+    "backend_obj": "StatevectorBackend",
+    "backend_name": "statevector",
+    "energy": -1.1372838344885023,
+    "conformance": [],
+    "ok": true,
+    "t": 1.15
+  },
+  {
+    "solver": "SampledSubspaceVQE",
+    "molecule": "h2",
+    "backend": "planck",
+    "backend_obj": "PlanckBackend",
+    "backend_name": "planck",
+    "energy": -1.1372838344885023,
+    "conformance": [],
+    "ok": true,
+    "t": 0.83
+  },
+  {
+    "solver": "SampledSubspaceVQE",
+    "molecule": "lih",
+    "backend": "statevector",
+    "backend_obj": "StatevectorBackend",
+    "backend_name": "statevector",
+    "energy": -7.863641965776454,
+    "conformance": [],
+    "ok": true,
+    "t": 6.38
+  },
+  {
+    "solver": "SampledSubspaceVQE",
+    "molecule": "lih",
+    "backend": "planck",
+    "backend_obj": "PlanckBackend",
+    "backend_name": "planck",
+    "energy": -7.8626902060723305,
+    "conformance": [],
+    "ok": true,
+    "t": 6.25
+  },
+  {
+    "solver": "SampledSubspaceVQE",
+    "molecule": "h2o",
+    "backend": "statevector",
+    "backend_obj": "StatevectorBackend",
+    "backend_name": "statevector",
+    "energy": -74.9627089506258,
+    "conformance": [],
+    "ok": true,
+    "t": 19.76
+  },
+  {
+    "solver": "SampledSubspaceVQE",
+    "molecule": "h2o",
+    "backend": "planck",
+    "backend_obj": "PlanckBackend",
+    "backend_name": "planck",
+    "energy": -74.9645189364638,
+    "conformance": [],
+    "ok": true,
+    "t": 19.8
+  },
+  {
+    "solver": "ExcitedStates",
+    "molecule": "h2",
+    "backend": "statevector",
+    "backend_obj": "StatevectorBackend",
+    "backend_name": "statevector",
+    "energy": -1.1167593073964253,
+    "conformance": [],
+    "ok": true,
+    "t": 0.0
+  },
+  {
+    "solver": "ExcitedStates",
+    "molecule": "h2",
+    "backend": "planck",
+    "backend_obj": "PlanckBackend",
+    "backend_name": "planck",
+    "energy": -1.1167593073964253,
+    "conformance": [],
+    "ok": true,
+    "t": 0.0
+  },
+  {
+    "solver": "ExcitedStates",
+    "molecule": "lih",
+    "backend": "statevector",
+    "backend_obj": "StatevectorBackend",
+    "backend_name": "statevector",
+    "energy": -7.861864769809256,
+    "conformance": [],
+    "ok": true,
+    "t": 0.02
+  },
+  {
+    "solver": "ExcitedStates",
+    "molecule": "lih",
+    "backend": "planck",
+    "backend_obj": "PlanckBackend",
+    "backend_name": "planck",
+    "energy": -7.861864769809256,
+    "conformance": [],
+    "ok": true,
+    "t": 0.02
+  },
+  {
+    "solver": "ExcitedStates",
+    "molecule": "h2o",
+    "backend": "statevector",
+    "backend_obj": "StatevectorBackend",
+    "backend_name": "statevector",
+    "ok": false,
+    "error": "AttributeError: 'ActiveHamiltonian' object has no attribute 'solve_scf'",
+    "timeout": false,
+    "trace": [
+      "  File \"/root/kanad/solvers/excited_states_solver.py\", line 184, in _solve_cis",
+      "    density_matrix, hf_energy = self.hamiltonian.solve_scf(",
+      "                                ^^^^^^^^^^^^^^^^^^^^^^^^^^",
+      "AttributeError: 'ActiveHamiltonian' object has no attribute 'solve_scf'"
+    ],
+    "t": 0.03
+  },
+  {
+    "solver": "ExcitedStates",
+    "molecule": "h2o",
+    "backend": "planck",
+    "backend_obj": "PlanckBackend",
+    "backend_name": "planck",
+    "ok": false,
+    "error": "AttributeError: 'ActiveHamiltonian' object has no attribute 'solve_scf'",
+    "timeout": false,
+    "trace": [
+      "  File \"/root/kanad/solvers/excited_states_solver.py\", line 184, in _solve_cis",
+      "    density_matrix, hf_energy = self.hamiltonian.solve_scf(",
+      "                                ^^^^^^^^^^^^^^^^^^^^^^^^^^",
+      "AttributeError: 'ActiveHamiltonian' object has no attribute 'solve_scf'"
+    ],
+    "t": 0.03
+  },
+  {
+    "solver": "SmartSolver",
+    "molecule": "h2",
+    "backend": "statevector",
+    "backend_obj": "StatevectorBackend",
+    "backend_name": "statevector",
+    "energy": -1.1372838344885023,
+    "conformance": [],
+    "ok": true,
+    "t": 0.02
+  },
+  {
+    "solver": "SmartSolver",
+    "molecule": "h2",
+    "backend": "planck",
+    "backend_obj": "PlanckBackend",
+    "backend_name": "planck",
+    "energy": -1.1372838344885023,
+    "conformance": [],
+    "ok": true,
+    "t": 0.02
+  },
+  {
+    "solver": "SmartSolver",
+    "molecule": "lih",
+    "backend": "statevector",
+    "backend_obj": "StatevectorBackend",
+    "backend_name": "statevector",
+    "energy": -7.882324378883491,
+    "conformance": [],
+    "ok": true,
+    "t": 0.24
+  },
+  {
+    "solver": "SmartSolver",
+    "molecule": "lih",
+    "backend": "planck",
+    "backend_obj": "PlanckBackend",
+    "backend_name": "planck",
+    "energy": -7.882324378883502,
+    "conformance": [],
+    "ok": true,
+    "t": 0.23
+  },
+  {
+    "solver": "SmartSolver",
+    "molecule": "h2o",
+    "backend": "statevector",
+    "backend_obj": "StatevectorBackend",
+    "backend_name": "statevector",
+    "energy": -75.0120116338225,
+    "conformance": [],
+    "ok": true,
+    "t": 1.26
+  },
+  {
+    "solver": "SmartSolver",
+    "molecule": "h2o",
+    "backend": "planck",
+    "backend_obj": "PlanckBackend",
+    "backend_name": "planck",
+    "energy": -75.0120116338225,
+    "conformance": [],
+    "ok": true,
+    "t": 0.85
+  }
+]

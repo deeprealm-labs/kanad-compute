@@ -1,0 +1,8 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# Package metadata + the flat-layout package mapping live in setup.py (the
+# package_dir={"kanad": "."} trick), so nothing is declared here beyond the build
+# backend. This keeps setuptools from running flat-layout auto-discovery (which
+# fails on a repo whose root is itself the package).

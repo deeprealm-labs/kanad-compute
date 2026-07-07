@@ -1,0 +1,395 @@
+"""
+Metallic bond with governance protocol enforcement.
+
+Models delocalized electron systems and band structure.
+"""
+
+from typing import Dict, Any, Optional, List
+import numpy as np
+
+from kanad.core.bonds.base_bond import BaseBond
+from kanad.core.atom import Atom
+from kanad.core.representations.base_representation import Molecule
+from kanad.core.hamiltonians.metallic_hamiltonian import MetallicHamiltonian
+from kanad.core.governance.protocols.metallic_protocol import MetallicGovernanceProtocol
+from kanad.core.temperature import Temperature
+from kanad.core.mappers.jordan_wigner_mapper import JordanWignerMapper
+
+
+class MetallicBond(BaseBond):
+    """
+    Metallic bond with automatic governance and quantum framework.
+
+    Models:
+    - Delocalized electrons across multiple atoms
+    - Quantum tight-binding Hamiltonian
+    - Band structure and Fermi surface
+    - GHZ-like collective entanglement
+    - Temperature-dependent properties
+
+    Governance:
+    - Enforces delocalization
+    - Validates metallic character
+    - Constructs band-structure ansatz
+
+    Quantum Framework:
+    - MetallicHamiltonian (tight-binding + Hubbard U)
+    - MetallicGovernanceProtocol (validation)
+    - Temperature (thermal effects)
+    - VQE support for ground state
+
+    Note:
+        Metallic bonding requires multiple atoms (typically > 2)
+        and shows collective quantum behavior.
+    """
+
+    def __init__(
+        self,
+        atoms: List[Atom],
+        lattice_type: str = '1d_chain',
+        hopping_parameter: Optional[float] = None,
+        hubbard_u: float = 2.0,  # Default 2 eV (typical for metals, needed for VQE)
+        temperature: Optional[float] = None,
+        periodic: bool = True,
+        basis: str = 'sto-3g'
+    ):
+        """
+        Initialize metallic bond with quantum framework.
+
+        Args:
+            atoms: List of atoms (typically all same element)
+            lattice_type: Lattice structure ('1d_chain', '2d_square', etc.)
+            hopping_parameter: Electron hopping strength t (eV), default -1.0
+            hubbard_u: Coulomb repulsion U (eV), 0 for non-interacting
+            temperature: Temperature in Kelvin (None for T=0)
+            periodic: Use periodic boundary conditions
+            basis: Basis set name (default: 'sto-3g')
+        """
+        super().__init__(atoms, 'metallic', distance=None)
+        self.basis = basis
+
+        self.lattice_type = lattice_type
+        self.n_atoms = len(atoms)
+        self.hopping_parameter = hopping_parameter if hopping_parameter is not None else -1.0
+        self.hubbard_u = hubbard_u
+        self.periodic = periodic
+
+        # Create molecule
+        self.molecule = Molecule(atoms)
+
+        # Temperature (None = T=0)
+        self.temperature = Temperature(temperature) if temperature is not None else Temperature.zero()
+
+        # Create quantum Hamiltonian
+        self.hamiltonian = MetallicHamiltonian(
+            molecule=self.molecule,
+            lattice_type=lattice_type,
+            hopping_parameter=self.hopping_parameter,
+            onsite_energy=0.0,
+            hubbard_u=hubbard_u,
+            periodic=periodic,
+            temperature=temperature,
+            basis_name=basis
+        )
+
+        # Governance protocol
+        self.governance = MetallicGovernanceProtocol()
+
+        # Mapper for qubit operations
+        self.mapper = JordanWignerMapper()
+
+    def compute_energy(
+        self,
+        method: str = 'tight_binding',
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        Compute metallic system energy.
+
+        Args:
+            method: Computational method
+                - 'tight_binding': Classical tight-binding (fast)
+                - 'quantum': Quantum Hamiltonian (exact diagonalization)
+                - 'VQE': Variational Quantum Eigensolver
+                - 'HI-VQE' or 'HIVQE': Hi-VQE mode (recommended, 1000x fewer measurements)
+                - 'SQD': Subspace Quantum Diagonalization
+                - 'KRYLOV': Krylov SQD (efficient for larger systems)
+            **kwargs: Method parameters
+                use_temperature: Include thermal effects (bool)
+                n_layers: VQE layers (int)
+                max_iterations: VQE max iterations (int)
+                subspace_dim: SQD subspace dimension (default: 8)
+                krylov_dim: Krylov subspace dimension (default: 8)
+                hivqe_iterations: Hi-VQE max iterations (default: 10)
+                backend: Quantum backend ('statevector', 'ibm', 'bluequbit')
+
+        Returns:
+            Dictionary with results including energy, method, converged, etc.
+        """
+        result = {}
+
+        if method.lower() == 'tight_binding':
+            # Classical tight-binding (original implementation)
+            eigenvalues = np.linalg.eigvalsh(self.hamiltonian.h_tight_binding)
+            n_electrons = self.hamiltonian.n_electrons
+            n_bands_occupied = int(np.ceil(n_electrons / 2.0))
+
+            # Ensure n_bands_occupied doesn't exceed available eigenvalues
+            n_available_bands = len(eigenvalues)
+            n_bands_occupied = min(n_bands_occupied, n_available_bands)
+
+            # Compute energy (T=0 or thermal)
+            if self.temperature.T > 0 and kwargs.get('use_temperature', False):
+                # Thermal energy with Fermi-Dirac distribution
+                fermi_energy = self.hamiltonian.get_fermi_energy(eigenvalues)
+                total_energy = self.temperature.thermal_energy(
+                    eigenvalues, fermi_energy, degeneracy=2
+                )
+                result['thermal'] = True
+                result['entropy'] = self.temperature.entropy(eigenvalues, fermi_energy)
+                result['free_energy'] = self.temperature.free_energy(eigenvalues, fermi_energy)
+            else:
+                # T=0: fill bands
+                # For tight-binding, we need to account for the fact that each eigenvalue
+                # represents a band that can hold 2 electrons (spin up and down)
+
+                # Build density matrix from occupied orbitals
+                eigenvectors = np.linalg.eigh(self.hamiltonian.h_tight_binding)[1]
+                density_matrix = np.zeros_like(self.hamiltonian.h_tight_binding)
+
+                # Fill fully-occupied (doubly-occupied) bands at 2 electrons each.
+                # Fix: previously every band up to ceil(n/2) was filled at 2.0, which
+                # double-fills the top band for odd n_electrons (Tr(DM) off by one).
+                n_pairs = n_electrons // 2
+                n_pairs = min(n_pairs, n_available_bands)
+                for i in range(n_pairs):
+                    density_matrix += 2.0 * np.outer(eigenvectors[:, i], eigenvectors[:, i])
+
+                # Odd electron: the next band is singly occupied (1 electron, not 2).
+                if n_electrons % 2 == 1 and n_pairs < n_available_bands:
+                    density_matrix += 1.0 * np.outer(eigenvectors[:, n_pairs], eigenvectors[:, n_pairs])
+
+                # Compute energy including Hubbard U
+                total_energy = self.hamiltonian.compute_energy(density_matrix)
+                result['thermal'] = False
+
+            result['energy'] = total_energy
+            result['method'] = 'Tight-Binding'
+            result['converged'] = True
+            result['band_energies'] = eigenvalues
+            result['fermi_energy'] = self.hamiltonian.get_fermi_energy(eigenvalues)
+            result['n_electrons'] = n_electrons
+            result['is_metallic'] = self.hamiltonian.is_metallic()
+
+        elif method.lower() == 'quantum':
+            # Quantum Hamiltonian.
+            # Fix: previously returned a bare Fermi-Dirac band-energy sum
+            # (thermal_energy) that dropped the Hubbard-U term and did not pin the
+            # exact integer electron count. Build the T=0 density matrix the same
+            # way as the tight_binding branch and route through compute_energy so
+            # the Hubbard-U contribution is included.
+            eigenvalues, eigenvectors = np.linalg.eigh(self.hamiltonian.h_tight_binding)
+            fermi_energy = self.hamiltonian.get_fermi_energy(eigenvalues)
+            n_electrons = self.hamiltonian.n_electrons
+            n_available_bands = len(eigenvalues)
+
+            density_matrix = np.zeros_like(self.hamiltonian.h_tight_binding)
+            n_pairs = min(n_electrons // 2, n_available_bands)
+            for i in range(n_pairs):
+                density_matrix += 2.0 * np.outer(eigenvectors[:, i], eigenvectors[:, i])
+            if n_electrons % 2 == 1 and n_pairs < n_available_bands:
+                density_matrix += 1.0 * np.outer(eigenvectors[:, n_pairs], eigenvectors[:, n_pairs])
+
+            result['energy'] = self.hamiltonian.compute_energy(density_matrix)
+            result['method'] = 'Quantum (Tight-Binding)'
+            result['converged'] = True
+            result['band_energies'] = eigenvalues
+            result['fermi_energy'] = fermi_energy
+            result['is_metallic'] = self.hamiltonian.is_metallic()
+
+        elif method.lower() == 'vqe':
+            # VQE for metallic system
+            result = self._compute_vqe(**kwargs)
+
+        elif method.upper() == 'SQD':
+            # Subspace Quantum Diagonalization
+            from kanad.solvers.deterministic_ci import DeterministicCI
+
+            solver = DeterministicCI(
+                self,
+                subspace_dim=kwargs.get('subspace_dim', 8),
+                backend=kwargs.get('backend', 'statevector')
+            )
+            sqd_result = solver.solve()
+
+            result['energy'] = sqd_result['energy']
+            result['method'] = 'SQD (Subspace Quantum Diagonalization)'
+            result['converged'] = sqd_result.get('converged', True)
+            result['iterations'] = sqd_result.get('iterations', 0)
+            result['subspace_size'] = sqd_result.get('subspace_size', 0)
+            result['is_metallic'] = self.hamiltonian.is_metallic()
+
+        elif method.upper() == 'KRYLOV':
+            # Krylov SQD for larger systems
+            from kanad.solvers.lanczos_solver import LanczosSolver
+
+            solver = LanczosSolver(
+                self,
+                krylov_dim=kwargs.get('krylov_dim', 8),
+                backend=kwargs.get('backend', 'statevector')
+            )
+            krylov_result = solver.solve().to_dict()
+
+            result['energy'] = krylov_result['energy']
+            result['method'] = 'Krylov SQD'
+            result['converged'] = krylov_result.get('converged', True)
+            result['iterations'] = krylov_result.get('iterations', 0)
+            result['is_metallic'] = self.hamiltonian.is_metallic()
+
+        elif method.upper() in ('HI-VQE', 'HIVQE'):
+            # Hi-VQE mode (subspace expansion VQE)
+            from kanad.solvers.vqe_solver import VQESolver
+            from kanad.core.ansatze.hardware_efficient_ansatz import EfficientSU2Ansatz
+
+            n_qubits = 2 * self.hamiltonian.n_orbitals
+
+            metallic_ansatz = EfficientSU2Ansatz(
+                n_qubits=n_qubits,
+                n_electrons=self.molecule.n_electrons,
+                n_layers=kwargs.get('n_layers', 2),
+                entanglement='full'
+            )
+
+            vqe = VQESolver(
+                hamiltonian=self.hamiltonian,
+                ansatz=metallic_ansatz,
+                mapper=self.mapper,
+                max_iterations=kwargs.get('max_iterations', 100),
+                mode='hivqe',
+                hivqe_max_iterations=kwargs.get('hivqe_iterations', 10)
+            )
+
+            hivqe_result = vqe.solve()
+
+            result['energy'] = hivqe_result['energy']
+            result['method'] = 'Hi-VQE (Metallic)'
+            result['converged'] = hivqe_result['converged']
+            result['iterations'] = hivqe_result['iterations']
+            result['hivqe_stats'] = hivqe_result.get('hivqe_stats', {})
+            result['is_metallic'] = self.hamiltonian.is_metallic()
+
+        else:
+            raise ValueError(f"Unknown method: {method}. Supported: tight_binding, quantum, VQE, SQD, KRYLOV, HI-VQE")
+
+        # Validate with governance
+        validation = self.governance.validate_physical_constraints(self.hamiltonian)
+        result['governance_validation'] = validation
+
+        # Add bond analysis
+        result['bond_analysis'] = self.analyze(result)
+        return result
+
+    def _compute_vqe(self, **kwargs) -> Dict[str, Any]:
+        """
+        Run VQE for metallic system.
+
+        Args:
+            **kwargs: VQE parameters
+
+        Returns:
+            VQE results
+        """
+        # Get suggested parameters from governance
+        params = self.governance.suggest_parameters(self.hamiltonian)
+        params.update(kwargs)  # Override with user params
+
+        n_layers = params.get('n_layers', 2)
+        entanglement = params.get('entanglement_type', 'ghz')
+        max_iter = params.get('max_iterations', 500)
+
+        n_qubits = 2 * self.hamiltonian.n_orbitals  # spin up + down
+
+        # Run REAL VQE with actual quantum circuit execution
+        from kanad.solvers.vqe_solver import VQESolver
+        from kanad.core.ansatze.hardware_efficient_ansatz import EfficientSU2Ansatz
+
+        # Create hardware-efficient ansatz (suitable for metallic systems)
+        # EfficientSU2 provides good expressivity for delocalized electrons
+        metallic_ansatz = EfficientSU2Ansatz(
+            n_qubits=n_qubits,
+            n_electrons=self.molecule.n_electrons,
+            n_layers=n_layers,
+            entanglement=entanglement if entanglement in ['linear', 'full', 'circular'] else 'full'
+        )
+
+        # Create VQE solver with real quantum circuit execution
+        vqe = VQESolver(
+            hamiltonian=self.hamiltonian,
+            ansatz=metallic_ansatz,
+            mapper=self.mapper,
+            max_iterations=max_iter
+        )
+
+        # Solve with real variational optimization
+        vqe_result = vqe.solve()
+
+        return {
+            'energy': vqe_result['energy'],
+            'method': 'VQE (Metallic Governance)',
+            'converged': vqe_result['converged'],
+            'iterations': vqe_result['iterations'],
+            'n_qubits': n_qubits,
+            'n_layers': n_layers,
+            'entanglement': entanglement,
+            'parameters': vqe_result.get('parameters', None),
+            'energy_history': vqe_result.get('energy_history', [])
+        }
+
+    def analyze(self, energy_data: Optional[Dict] = None) -> Dict[str, Any]:
+        """
+        Analyze metallic bond properties.
+
+        Args:
+            energy_data: Optional energy computation results
+
+        Returns:
+            Dictionary with bond properties
+        """
+        analysis = {
+            'bond_type': 'metallic',
+            'lattice_type': self.lattice_type,
+            'n_atoms': self.n_atoms,
+            'hopping_parameter': self.hopping_parameter,
+            'entanglement_type': 'GHZ-like (collective)',
+            'governance_protocol': 'MetallicGovernanceProtocol'
+        }
+
+        if energy_data and 'band_energies' in energy_data:
+            band_energies = energy_data['band_energies']
+            analysis['bandwidth'] = band_energies[-1] - band_energies[0]
+            analysis['fermi_energy'] = energy_data.get('fermi_energy', None)
+
+            # DOS at Fermi level (simplified: count states near Fermi energy)
+            if 'fermi_energy' in energy_data:
+                E_F = energy_data['fermi_energy']
+                delta_E = 0.1  # eV window
+                dos_at_fermi = np.sum(np.abs(band_energies - E_F) < delta_E)
+                analysis['dos_at_fermi'] = dos_at_fermi
+
+        return analysis
+
+    def get_band_structure(self) -> Dict[str, np.ndarray]:
+        """
+        Compute band structure.
+
+        Returns:
+            Dictionary with k-points and energies
+        """
+        # Use the Hamiltonian's band structure method
+        return self.hamiltonian.get_band_structure(n_k=50)
+
+    def __repr__(self) -> str:
+        """String representation."""
+        atom_symbol = self.atoms[0].symbol if self.atoms else '?'
+        return (f"MetallicBond({atom_symbol}_{self.n_atoms}, "
+                f"{self.lattice_type})")

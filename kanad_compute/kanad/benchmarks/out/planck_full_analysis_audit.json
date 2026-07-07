@@ -1,0 +1,750 @@
+{
+  "N2": {
+    "_meta": {
+      "qubits": 20,
+      "frontier": null,
+      "hf_energy": -107.49597503059053
+    },
+    "ground_state_PhysicsVQE": {
+      "gpu_routed": true,
+      "energy": -107.57573898541085,
+      "converged": true,
+      "ran": true,
+      "t": 13.68
+    },
+    "EnergyAnalyzer.decompose": {
+      "gpu_routed": false,
+      "total": -104.25256649909386,
+      "self_consistent": true,
+      "ran": true,
+      "t": 0.01
+    },
+    "BondingAnalyzer": {
+      "gpu_routed": false,
+      "bonding_type": "unknown",
+      "gap_ev": null,
+      "bond_orders_present": false,
+      "ran": true,
+      "t": 0.0
+    },
+    "CorrelationAnalyzer": {
+      "gpu_routed": false,
+      "correlation_energy": -0.07976395482032217,
+      "nonpositive": true,
+      "ran": true,
+      "t": 0.0
+    },
+    "PropertyCalculator.dipole": {
+      "gpu_routed": false,
+      "dipole_magnitude": 9.220152050818014e-15,
+      "nonneg_finite": true,
+      "ran": true,
+      "t": 0.0
+    },
+    "PropertyCalculator.polarizability_hf": {
+      "gpu_routed": false,
+      "keys": [
+        "alpha_anisotropy",
+        "alpha_mean",
+        "alpha_mean_angstrom3",
+        "alpha_tensor",
+        "alpha_xx",
+        "alpha_yy",
+        "alpha_zz",
+        "eigenvalues",
+        "field_strength",
+        "method",
+        "wavefunction"
+      ],
+      "mean": 3.946976584779319,
+      "symmetric": true,
+      "ran": true,
+      "t": 0.11
+    },
+    "UVVis.excited_states": {
+      "gpu_routed": false,
+      "n_exc": 3,
+      "exc_ev": [
+        9.481,
+        9.481,
+        11.774
+      ],
+      "all_positive": true,
+      "ran": true,
+      "t": 14.12
+    },
+    "absorption_spectrum": {
+      "gpu_routed": false,
+      "keys": [
+        "broadening_ev",
+        "excitation_energies_ev",
+        "grid_ev",
+        "intensity",
+        "lineshape",
+        "oscillator_strengths"
+      ],
+      "ran": true,
+      "t": 17.89
+    },
+    "NMRCalculator": {
+      "gpu_routed": false,
+      "ran": false,
+      "error": "ValueError: Hamiltonian has no atoms",
+      "trace": [
+        "  File \"/root/kanad/analysis/nmr_calculator.py\", line 125, in __init__",
+        "    raise ValueError(\"Hamiltonian has no atoms\")",
+        "ValueError: Hamiltonian has no atoms"
+      ],
+      "t": 0.0
+    },
+    "FrequencyCalculator": {
+      "gpu_routed": false,
+      "n_modes": 1,
+      "zpe_positive": true,
+      "n_imag": 0,
+      "ran": true,
+      "t": 0.33
+    },
+    "RamanIRCalculator": {
+      "gpu_routed": false,
+      "ran": false,
+      "error": "ValueError: Hamiltonian has no atoms",
+      "trace": [
+        "  File \"/root/kanad/analysis/raman_calculator.py\", line 87, in __init__",
+        "    raise ValueError(\"Hamiltonian has no atoms\")",
+        "ValueError: Hamiltonian has no atoms"
+      ],
+      "t": 0.0
+    },
+    "ThermochemistryCalculator": {
+      "gpu_routed": false,
+      "S_nonneg": false,
+      "G_consistent": false,
+      "ran": true,
+      "t": 0.02
+    },
+    "DOSCalculator.quantum_dos": {
+      "gpu_routed": false,
+      "ran": false,
+      "error": "MemoryError: Unable to allocate 16.0 TiB for an array with shape (1048576, 1048576) and data type complex128",
+      "trace": [
+        "    m = zeros((N, M), dtype=dtype, order=order, device=device)",
+        "        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+        "numpy._core._exceptions._ArrayMemoryError: Unable to allocate 16.0 TiB for an array with shape (1048576, 1048576) and data type complex128"
+      ],
+      "t": 0.16
+    },
+    "UncertaintyAnalyzer": {
+      "gpu_routed": false,
+      "std_nonneg": true,
+      "ran": true,
+      "t": 0.0
+    },
+    "BondLengthScanner.scan": {
+      "gpu_routed": false,
+      "n_points": 8,
+      "monotone_dissoc": true,
+      "eq_distance": 1.1315315315315315,
+      "ran": true,
+      "t": 0.28
+    },
+    "ConfigurationExplorer.scan": {
+      "gpu_routed": true,
+      "ran": false,
+      "error": "TypeError: unsupported format string passed to dict.__format__",
+      "trace": [
+        "    logger.debug(f\"r = {r:.3f} \u00c5, E = {snapshot.energy:.6f} Ha, \"",
+        "                                      ^^^^^^^^^^^^^^^^^^^^^",
+        "TypeError: unsupported format string passed to dict.__format__"
+      ],
+      "t": 0.02
+    },
+    "descriptors+reactivity": {
+      "gpu_routed": false,
+      "reactivity_keys": [
+        "quantum_reactivity"
+      ],
+      "ran": true,
+      "t": 0.0
+    },
+    "Photodynamics": {
+      "gpu_routed": true,
+      "n_steps": 5,
+      "pop_conservation": 2.220446049250313e-16,
+      "ran": true,
+      "t": 302.3
+    },
+    "VibronicCalculator": {
+      "gpu_routed": false,
+      "ran": false,
+      "error": "ValueError: setting an array element with a sequence. The requested array has an inhomogeneous shape after 1 dimensions. The detected shape was (4,) + inhomogeneous part.",
+      "trace": [
+        "    vals = np.asarray(list(fc.values()) if isinstance(fc, dict) else fc).ravel()",
+        "           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+        "ValueError: setting an array element with a sequence. The requested array has an inhomogeneous shape after 1 dimensions. The detected shape was (4,) + inhomogeneous part."
+      ],
+      "t": 0.0
+    }
+  },
+  "CO": {
+    "_meta": {
+      "qubits": 20,
+      "frontier": null,
+      "hf_energy": -111.22455869560902
+    },
+    "ground_state_PhysicsVQE": {
+      "gpu_routed": true,
+      "energy": -111.26434615886762,
+      "converged": true,
+      "ran": true,
+      "t": 23.58
+    },
+    "EnergyAnalyzer.decompose": {
+      "gpu_routed": false,
+      "total": -107.46143624585915,
+      "self_consistent": true,
+      "ran": true,
+      "t": 0.01
+    },
+    "BondingAnalyzer": {
+      "gpu_routed": false,
+      "bonding_type": "unknown",
+      "gap_ev": null,
+      "bond_orders_present": false,
+      "ran": true,
+      "t": 0.0
+    },
+    "CorrelationAnalyzer": {
+      "gpu_routed": false,
+      "correlation_energy": -0.03978746325860527,
+      "nonpositive": true,
+      "ran": true,
+      "t": 0.0
+    },
+    "PropertyCalculator.dipole": {
+      "gpu_routed": false,
+      "dipole_magnitude": 0.16873506074980826,
+      "nonneg_finite": true,
+      "ran": true,
+      "t": 0.0
+    },
+    "PropertyCalculator.polarizability_hf": {
+      "gpu_routed": false,
+      "keys": [
+        "alpha_anisotropy",
+        "alpha_mean",
+        "alpha_mean_angstrom3",
+        "alpha_tensor",
+        "alpha_xx",
+        "alpha_yy",
+        "alpha_zz",
+        "eigenvalues",
+        "field_strength",
+        "method",
+        "wavefunction"
+      ],
+      "mean": 4.406636311541052,
+      "symmetric": true,
+      "ran": true,
+      "t": 0.17
+    },
+    "UVVis.excited_states": {
+      "gpu_routed": false,
+      "n_exc": 3,
+      "exc_ev": [
+        8.98,
+        8.98,
+        11.285
+      ],
+      "all_positive": true,
+      "ran": true,
+      "t": 17.01
+    },
+    "absorption_spectrum": {
+      "gpu_routed": false,
+      "keys": [
+        "broadening_ev",
+        "excitation_energies_ev",
+        "grid_ev",
+        "intensity",
+        "lineshape",
+        "oscillator_strengths"
+      ],
+      "ran": true,
+      "t": 21.59
+    },
+    "NMRCalculator": {
+      "gpu_routed": false,
+      "ran": false,
+      "error": "ValueError: Hamiltonian has no atoms",
+      "trace": [
+        "  File \"/root/kanad/analysis/nmr_calculator.py\", line 125, in __init__",
+        "    raise ValueError(\"Hamiltonian has no atoms\")",
+        "ValueError: Hamiltonian has no atoms"
+      ],
+      "t": 0.0
+    },
+    "FrequencyCalculator": {
+      "gpu_routed": false,
+      "n_modes": 1,
+      "zpe_positive": true,
+      "n_imag": 0,
+      "ran": true,
+      "t": 0.45
+    },
+    "RamanIRCalculator": {
+      "gpu_routed": false,
+      "ran": false,
+      "error": "ValueError: Hamiltonian has no atoms",
+      "trace": [
+        "  File \"/root/kanad/analysis/raman_calculator.py\", line 87, in __init__",
+        "    raise ValueError(\"Hamiltonian has no atoms\")",
+        "ValueError: Hamiltonian has no atoms"
+      ],
+      "t": 0.0
+    },
+    "ThermochemistryCalculator": {
+      "gpu_routed": false,
+      "S_nonneg": false,
+      "G_consistent": false,
+      "ran": true,
+      "t": 0.03
+    },
+    "DOSCalculator.quantum_dos": {
+      "gpu_routed": false,
+      "ran": false,
+      "error": "MemoryError: Unable to allocate 16.0 TiB for an array with shape (1048576, 1048576) and data type complex128",
+      "trace": [
+        "    m = zeros((N, M), dtype=dtype, order=order, device=device)",
+        "        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+        "numpy._core._exceptions._ArrayMemoryError: Unable to allocate 16.0 TiB for an array with shape (1048576, 1048576) and data type complex128"
+      ],
+      "t": 0.2
+    },
+    "UncertaintyAnalyzer": {
+      "gpu_routed": false,
+      "std_nonneg": true,
+      "ran": true,
+      "t": 0.0
+    },
+    "BondLengthScanner.scan": {
+      "gpu_routed": false,
+      "n_points": 8,
+      "monotone_dissoc": false,
+      "eq_distance": 1.1411411411411412,
+      "ran": true,
+      "t": 0.49
+    },
+    "ConfigurationExplorer.scan": {
+      "gpu_routed": true,
+      "ran": false,
+      "error": "TypeError: unsupported format string passed to dict.__format__",
+      "trace": [
+        "    logger.debug(f\"r = {r:.3f} \u00c5, E = {snapshot.energy:.6f} Ha, \"",
+        "                                      ^^^^^^^^^^^^^^^^^^^^^",
+        "TypeError: unsupported format string passed to dict.__format__"
+      ],
+      "t": 0.03
+    },
+    "descriptors+reactivity": {
+      "gpu_routed": false,
+      "reactivity_keys": [
+        "quantum_reactivity"
+      ],
+      "ran": true,
+      "t": 0.0
+    },
+    "Photodynamics": {
+      "gpu_routed": true,
+      "n_steps": 5,
+      "pop_conservation": 2.220446049250313e-16,
+      "ran": true,
+      "t": 302.32
+    },
+    "VibronicCalculator": {
+      "gpu_routed": false,
+      "ran": false,
+      "error": "ValueError: setting an array element with a sequence. The requested array has an inhomogeneous shape after 1 dimensions. The detected shape was (4,) + inhomogeneous part.",
+      "trace": [
+        "    vals = np.asarray(list(fc.values()) if isinstance(fc, dict) else fc).ravel()",
+        "           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+        "ValueError: setting an array element with a sequence. The requested array has an inhomogeneous shape after 1 dimensions. The detected shape was (4,) + inhomogeneous part."
+      ],
+      "t": 0.0
+    }
+  },
+  "C2": {
+    "_meta": {
+      "qubits": 20,
+      "frontier": null,
+      "hf_energy": -74.4220192708696
+    },
+    "ground_state_PhysicsVQE": {
+      "gpu_routed": true,
+      "energy": -74.55328785282988,
+      "converged": true,
+      "ran": true,
+      "t": 14.01
+    },
+    "EnergyAnalyzer.decompose": {
+      "gpu_routed": false,
+      "total": -70.19548334872691,
+      "self_consistent": true,
+      "ran": true,
+      "t": 0.01
+    },
+    "BondingAnalyzer": {
+      "gpu_routed": false,
+      "bonding_type": "unknown",
+      "gap_ev": null,
+      "bond_orders_present": false,
+      "ran": true,
+      "t": 0.0
+    },
+    "CorrelationAnalyzer": {
+      "gpu_routed": false,
+      "correlation_energy": -0.1312685819602848,
+      "nonpositive": true,
+      "ran": true,
+      "t": 0.0
+    },
+    "PropertyCalculator.dipole": {
+      "gpu_routed": false,
+      "dipole_magnitude": 6.9441840169104635e-12,
+      "nonneg_finite": true,
+      "ran": true,
+      "t": 0.0
+    },
+    "PropertyCalculator.polarizability_hf": {
+      "gpu_routed": false,
+      "keys": [
+        "alpha_anisotropy",
+        "alpha_mean",
+        "alpha_mean_angstrom3",
+        "alpha_tensor",
+        "alpha_xx",
+        "alpha_yy",
+        "alpha_zz",
+        "eigenvalues",
+        "field_strength",
+        "method",
+        "wavefunction"
+      ],
+      "mean": -102.05495388443835,
+      "symmetric": true,
+      "ran": true,
+      "t": 0.2
+    },
+    "UVVis.excited_states": {
+      "gpu_routed": false,
+      "n_exc": 3,
+      "exc_ev": [
+        2.945,
+        2.945,
+        4.548
+      ],
+      "all_positive": true,
+      "ran": true,
+      "t": 21.46
+    },
+    "absorption_spectrum": {
+      "gpu_routed": false,
+      "keys": [
+        "broadening_ev",
+        "excitation_energies_ev",
+        "grid_ev",
+        "intensity",
+        "lineshape",
+        "oscillator_strengths"
+      ],
+      "ran": true,
+      "t": 26.91
+    },
+    "NMRCalculator": {
+      "gpu_routed": false,
+      "ran": false,
+      "error": "ValueError: Hamiltonian has no atoms",
+      "trace": [
+        "  File \"/root/kanad/analysis/nmr_calculator.py\", line 125, in __init__",
+        "    raise ValueError(\"Hamiltonian has no atoms\")",
+        "ValueError: Hamiltonian has no atoms"
+      ],
+      "t": 0.0
+    },
+    "FrequencyCalculator": {
+      "gpu_routed": false,
+      "n_modes": 1,
+      "zpe_positive": true,
+      "n_imag": 0,
+      "ran": true,
+      "t": 0.35
+    },
+    "RamanIRCalculator": {
+      "gpu_routed": false,
+      "ran": false,
+      "error": "ValueError: Hamiltonian has no atoms",
+      "trace": [
+        "  File \"/root/kanad/analysis/raman_calculator.py\", line 87, in __init__",
+        "    raise ValueError(\"Hamiltonian has no atoms\")",
+        "ValueError: Hamiltonian has no atoms"
+      ],
+      "t": 0.0
+    },
+    "ThermochemistryCalculator": {
+      "gpu_routed": false,
+      "S_nonneg": false,
+      "G_consistent": false,
+      "ran": true,
+      "t": 0.02
+    },
+    "DOSCalculator.quantum_dos": {
+      "gpu_routed": false,
+      "ran": false,
+      "error": "MemoryError: Unable to allocate 16.0 TiB for an array with shape (1048576, 1048576) and data type complex128",
+      "trace": [
+        "    m = zeros((N, M), dtype=dtype, order=order, device=device)",
+        "        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+        "numpy._core._exceptions._ArrayMemoryError: Unable to allocate 16.0 TiB for an array with shape (1048576, 1048576) and data type complex128"
+      ],
+      "t": 0.17
+    },
+    "UncertaintyAnalyzer": {
+      "gpu_routed": false,
+      "std_nonneg": true,
+      "ran": true,
+      "t": 0.0
+    },
+    "BondLengthScanner.scan": {
+      "gpu_routed": false,
+      "n_points": 8,
+      "monotone_dissoc": false,
+      "eq_distance": 1.2084084084084084,
+      "ran": true,
+      "t": 0.29
+    },
+    "ConfigurationExplorer.scan": {
+      "gpu_routed": true,
+      "ran": false,
+      "error": "TypeError: unsupported format string passed to dict.__format__",
+      "trace": [
+        "    logger.debug(f\"r = {r:.3f} \u00c5, E = {snapshot.energy:.6f} Ha, \"",
+        "                                      ^^^^^^^^^^^^^^^^^^^^^",
+        "TypeError: unsupported format string passed to dict.__format__"
+      ],
+      "t": 0.02
+    },
+    "descriptors+reactivity": {
+      "gpu_routed": false,
+      "reactivity_keys": [
+        "quantum_reactivity"
+      ],
+      "ran": true,
+      "t": 0.0
+    },
+    "Photodynamics": {
+      "gpu_routed": true,
+      "n_steps": 5,
+      "pop_conservation": 4.440892098500626e-16,
+      "ran": true,
+      "t": 302.22
+    },
+    "VibronicCalculator": {
+      "gpu_routed": false,
+      "ran": false,
+      "error": "ValueError: setting an array element with a sequence. The requested array has an inhomogeneous shape after 1 dimensions. The detected shape was (4,) + inhomogeneous part.",
+      "trace": [
+        "    vals = np.asarray(list(fc.values()) if isinstance(fc, dict) else fc).ravel()",
+        "           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+        "ValueError: setting an array element with a sequence. The requested array has an inhomogeneous shape after 1 dimensions. The detected shape was (4,) + inhomogeneous part."
+      ],
+      "t": 0.0
+    }
+  },
+  "formaldehyde": {
+    "_meta": {
+      "qubits": 12,
+      "frontier": [
+        3,
+        3
+      ],
+      "hf_energy": -112.35391687223738
+    },
+    "ground_state_PhysicsVQE": {
+      "gpu_routed": true,
+      "energy": -112.42168592595498,
+      "converged": true,
+      "ran": true,
+      "t": 243.18
+    },
+    "EnergyAnalyzer.decompose": {
+      "gpu_routed": false,
+      "ran": false,
+      "error": "ValueError: operands could not be broadcast together with shapes (12,12) (6,6) ",
+      "trace": [
+        "    E_core = np.sum(density_matrix * h_core)",
+        "                    ~~~~~~~~~~~~~~~^~~~~~~~",
+        "ValueError: operands could not be broadcast together with shapes (12,12) (6,6) "
+      ],
+      "t": 0.0
+    },
+    "BondingAnalyzer": {
+      "gpu_routed": false,
+      "bonding_type": "unknown",
+      "gap_ev": null,
+      "bond_orders_present": false,
+      "ran": true,
+      "t": 0.0
+    },
+    "CorrelationAnalyzer": {
+      "gpu_routed": false,
+      "correlation_energy": -0.06776905371759767,
+      "nonpositive": true,
+      "ran": true,
+      "t": 0.0
+    },
+    "PropertyCalculator.dipole": {
+      "gpu_routed": false,
+      "dipole_magnitude": 1.5251125621825237,
+      "nonneg_finite": true,
+      "ran": true,
+      "t": 0.0
+    },
+    "PropertyCalculator.polarizability_hf": {
+      "gpu_routed": false,
+      "keys": [
+        "alpha_anisotropy",
+        "alpha_mean",
+        "alpha_mean_angstrom3",
+        "alpha_tensor",
+        "alpha_xx",
+        "alpha_yy",
+        "alpha_zz",
+        "eigenvalues",
+        "field_strength",
+        "method",
+        "wavefunction"
+      ],
+      "mean": 6.3789367829288866,
+      "symmetric": true,
+      "ran": true,
+      "t": 0.22
+    },
+    "UVVis.excited_states": {
+      "gpu_routed": false,
+      "n_exc": 3,
+      "exc_ev": [
+        5.532,
+        10.433,
+        14.093
+      ],
+      "all_positive": true,
+      "ran": true,
+      "t": 0.31
+    },
+    "absorption_spectrum": {
+      "gpu_routed": false,
+      "keys": [
+        "broadening_ev",
+        "excitation_energies_ev",
+        "grid_ev",
+        "intensity",
+        "lineshape",
+        "oscillator_strengths"
+      ],
+      "ran": true,
+      "t": 0.29
+    },
+    "NMRCalculator": {
+      "gpu_routed": false,
+      "ran": false,
+      "error": "ValueError: Hamiltonian has no atoms",
+      "trace": [
+        "  File \"/root/kanad/analysis/nmr_calculator.py\", line 125, in __init__",
+        "    raise ValueError(\"Hamiltonian has no atoms\")",
+        "ValueError: Hamiltonian has no atoms"
+      ],
+      "t": 0.0
+    },
+    "FrequencyCalculator": {
+      "gpu_routed": false,
+      "n_modes": 6,
+      "zpe_positive": true,
+      "n_imag": 0,
+      "ran": true,
+      "t": 1.4
+    },
+    "RamanIRCalculator": {
+      "gpu_routed": false,
+      "ran": false,
+      "error": "ValueError: Hamiltonian has no atoms",
+      "trace": [
+        "  File \"/root/kanad/analysis/raman_calculator.py\", line 87, in __init__",
+        "    raise ValueError(\"Hamiltonian has no atoms\")",
+        "ValueError: Hamiltonian has no atoms"
+      ],
+      "t": 0.0
+    },
+    "ThermochemistryCalculator": {
+      "gpu_routed": false,
+      "S_nonneg": false,
+      "G_consistent": false,
+      "ran": true,
+      "t": 0.04
+    },
+    "DOSCalculator.quantum_dos": {
+      "gpu_routed": false,
+      "ran": false,
+      "error": "TypeError: argument of type 'SolverResult' is not iterable",
+      "trace": [
+        "    if 'eigenvalues' in result_solver:",
+        "       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+        "TypeError: argument of type 'SolverResult' is not iterable"
+      ],
+      "t": 0.59
+    },
+    "UncertaintyAnalyzer": {
+      "gpu_routed": false,
+      "std_nonneg": true,
+      "ran": true,
+      "t": 0.0
+    },
+    "BondLengthScanner.scan": {
+      "gpu_routed": false,
+      "n_points": 8,
+      "monotone_dissoc": false,
+      "eq_distance": 1.1955955955955955,
+      "ran": true,
+      "t": 0.43
+    },
+    "ConfigurationExplorer.scan": {
+      "gpu_routed": true,
+      "ran": false,
+      "error": "TypeError: unsupported format string passed to dict.__format__",
+      "trace": [
+        "    logger.debug(f\"r = {r:.3f} \u00c5, E = {snapshot.energy:.6f} Ha, \"",
+        "                                      ^^^^^^^^^^^^^^^^^^^^^",
+        "TypeError: unsupported format string passed to dict.__format__"
+      ],
+      "t": 0.04
+    },
+    "descriptors+reactivity": {
+      "gpu_routed": false,
+      "reactivity_keys": [
+        "quantum_reactivity"
+      ],
+      "ran": true,
+      "t": 0.0
+    },
+    "VibronicCalculator": {
+      "gpu_routed": false,
+      "ran": false,
+      "error": "ValueError: setting an array element with a sequence. The requested array has an inhomogeneous shape after 1 dimensions. The detected shape was (4,) + inhomogeneous part.",
+      "trace": [
+        "    vals = np.asarray(list(fc.values()) if isinstance(fc, dict) else fc).ravel()",
+        "           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+        "ValueError: setting an array element with a sequence. The requested array has an inhomogeneous shape after 1 dimensions. The detected shape was (4,) + inhomogeneous part."
+      ],
+      "t": 0.0
+    }
+  }
+}

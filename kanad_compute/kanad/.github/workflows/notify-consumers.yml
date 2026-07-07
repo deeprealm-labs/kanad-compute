@@ -1,0 +1,45 @@
+name: Notify framework consumers
+
+# Fires repository_dispatch events to downstream consumers
+# (kanad-compute, kanad-app) on every push to main, so they can
+# open auto-PRs pinning the new framework commit.
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Capture framework SHA
+        id: sha
+        run: echo "sha=${{ github.sha }}" >> $GITHUB_OUTPUT
+
+      - name: Dispatch to kanad-compute
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.KANAD_DISPATCH_PAT }}
+          repository: deeprealm-labs/kanad-compute
+          event-type: kanad-framework-updated
+          client-payload: |
+            {
+              "framework_sha": "${{ steps.sha.outputs.sha }}",
+              "framework_ref": "${{ github.ref_name }}",
+              "commit_message": ${{ toJson(github.event.head_commit.message) }}
+            }
+
+      - name: Dispatch to kanad-app
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.KANAD_DISPATCH_PAT }}
+          repository: mk0dz/kanad-app
+          event-type: kanad-framework-updated
+          client-payload: |
+            {
+              "framework_sha": "${{ steps.sha.outputs.sha }}",
+              "framework_ref": "${{ github.ref_name }}",
+              "commit_message": ${{ toJson(github.event.head_commit.message) }}
+            }

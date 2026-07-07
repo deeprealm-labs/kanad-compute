@@ -1,0 +1,87 @@
+name: Benchmarks
+
+on:
+  pull_request:
+    paths:
+      - 'core/**'
+      - 'solvers/**'
+      - 'ansatze/**'
+      - 'benchmarks/**'
+      - '__init__.py'
+      - '.github/workflows/benchmarks.yml'
+  schedule:
+    # Nightly: full Tier-1 sweep including VQE on the molecules whose
+    # convergence fits in the runner's wall budget (H₂, HeH⁺, LiH, HF).
+    # Larger systems are exercised via the CASCI column on every PR.
+    - cron: '0 4 * * *'  # 04:00 UTC daily
+  workflow_dispatch: {}
+
+jobs:
+  # PR check: CASCI-only sweep. The active-space Hamiltonian's lowest
+  # N-sector eigenvalue is what proves the chemistry is bit-correct.
+  # No VQE — runs in ~30 s and catches active-space + integral-transform
+  # regressions on every PR.
+  pr-casci:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Mirrors the runtime environment used in M1/M2.
+          python -m pip install numpy scipy qiskit qiskit-aer openfermion pyscf
+      - name: Run CASCI sweep
+        run: |
+          python -m benchmarks.run_benchmarks --no-vqe
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: casci-results
+          path: |
+            benchmarks/results.csv
+            benchmarks/results.md
+      - name: Post results to job summary
+        if: always()
+        run: |
+          if [ -f benchmarks/results.md ]; then
+            cat benchmarks/results.md >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # Nightly: VQE on the fast cases (H₂, HeH⁺, LiH, HF). BeH₂ and above
+  # exceed the GitHub-Actions 6-hour job limit under the current
+  # finite-difference gradient — they'll join when M2.7's analytical
+  # gradient lands.
+  nightly-vqe:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy scipy qiskit qiskit-aer openfermion pyscf
+      - name: Run VQE sweep (fast cases)
+        run: |
+          python -m benchmarks.run_benchmarks --cases H2 HeH+ LiH HF
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: vqe-results
+          path: |
+            benchmarks/results.csv
+            benchmarks/results.md
+      - name: Post results to job summary
+        if: always()
+        run: |
+          if [ -f benchmarks/results.md ]; then
+            cat benchmarks/results.md >> $GITHUB_STEP_SUMMARY
+          fi

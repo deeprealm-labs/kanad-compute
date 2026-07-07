@@ -10,5 +10,5 @@ build/
 env/
 venv/
 
-# Bundled kanad framework (added during CI build, not committed to git)
-kanad_compute/kanad/
+# Bundled kanad framework is now COMMITTED so `pip install git+…` is self-contained
+# (the framework's own repo is private). Re-vendor + commit it on framework updates.

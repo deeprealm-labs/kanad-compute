@@ -1,0 +1,57 @@
+{
+  "photodynamics": {
+    "ran": true,
+    "n_steps_saved": 11,
+    "population_conservation_maxdev": 4.440892098500626e-16,
+    "energies_finite": true,
+    "populations_nonneg": true,
+    "result_fields": [
+      "energies",
+      "excitation_probability",
+      "field_amplitudes",
+      "final_population",
+      "final_state",
+      "populations",
+      "times"
+    ]
+  },
+  "analysis": {
+    "ran": true,
+    "energy": -7.881664117434217,
+    "energy_finite": true,
+    "to_dict_keys": [
+      "analysis",
+      "backend",
+      "cloud_job_id",
+      "converged",
+      "correlation_captured",
+      "correlation_energy",
+      "energy",
+      "energy_history",
+      "excitations",
+      "fci_energy",
+      "hf_energy",
+      "iterations",
+      "n_evaluations",
+      "parameters",
+      "solver",
+      "states"
+    ],
+    "convergence_analysis_keys": [
+      "converged",
+      "energy_change",
+      "final_energy",
+      "final_gradient",
+      "initial_energy",
+      "iterations",
+      "mean_energy_change"
+    ],
+    "bonding_keys": [
+      "bonding_type",
+      "characteristics",
+      "homo_lumo_gap",
+      "homo_lumo_gap_ev"
+    ],
+    "bonding_finite": true
+  }
+}

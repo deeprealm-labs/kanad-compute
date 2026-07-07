@@ -1,0 +1,194 @@
+{
+  "tierA": [
+    {
+      "qubits": 14,
+      "system": "H2O/sto-3g",
+      "backends": {
+        "statevector": {
+          "energy": -74.98686815663103,
+          "hf_energy": -74.96270660885386,
+          "fci_energy": -75.0120116338225,
+          "energy_le_hf": true,
+          "ok": true,
+          "t": 9.96
+        },
+        "planck": {
+          "energy": -74.9868681566344,
+          "hf_energy": -74.96270660885384,
+          "fci_energy": -75.01201163382252,
+          "energy_le_hf": true,
+          "ok": true,
+          "t": 7.72
+        }
+      },
+      "parity_dE": 3.367972567502875e-12,
+      "analysis": {
+        "bonding_type": "unknown",
+        "bonding_gap_present": false,
+        "mf_homo_lumo_gap_ev": 27.146997513848024,
+        "mf_gap_nonneg": true,
+        "convergence_keys": [
+          "converged",
+          "energy_change",
+          "final_energy",
+          "final_gradient",
+          "initial_energy",
+          "iterations",
+          "mean_energy_change"
+        ],
+        "convergence_final_finite": true,
+        "decomp_sums_to_total": true,
+        "dipole_nonneg_finite": true
+      }
+    },
+    {
+      "qubits": 20,
+      "system": "H10/sto-3g/full",
+      "backends": {
+        "planck": {
+          "energy": -5.237710155520943,
+          "hf_energy": -5.21406880302828,
+          "fci_energy": -5.3799547460599495,
+          "energy_le_hf": true,
+          "ok": true,
+          "t": 405.11
+        }
+      },
+      "analysis": {
+        "bonding_type": "unknown",
+        "bonding_gap_present": false,
+        "mf_homo_lumo_gap_ev": 11.329863292475165,
+        "mf_gap_nonneg": true,
+        "convergence_keys": [
+          "converged",
+          "energy_change",
+          "final_energy",
+          "final_gradient",
+          "initial_energy",
+          "iterations",
+          "mean_energy_change"
+        ],
+        "convergence_final_finite": true,
+        "decomp_sums_to_total": true,
+        "dipole_nonneg_finite": true
+      }
+    }
+  ],
+  "tierB": [
+    {
+      "qubits": 20,
+      "system": "H10/sto-3g/full",
+      "dtype": "complex128",
+      "n_pauli_terms": 7151,
+      "hf_energy": -5.214068803028283,
+      "t_sparse": 22.57,
+      "t_build": 0.07,
+      "state_GB_theoretical": 0.02,
+      "vram_delta_GB": 0.54,
+      "vram_used_GB": 1.55,
+      "norm": 0.9999999999999989,
+      "norm_dev": 1.1102230246251565e-15,
+      "norm_ok": true,
+      "sum_z": -0.9803092777401016,
+      "t_sumz": 0.01,
+      "energy_H": 0.07068429872478857,
+      "t_expect_H": 2.56,
+      "energy_ge_lower_bound": true,
+      "energy_finite_real": true,
+      "cpu_overlap": 1.0000000000000004,
+      "cpu_overlap_ok": true,
+      "cpu_energy_H": 0.0706842987247874,
+      "energy_parity_dE": 1.1657341758564144e-15,
+      "ok": true
+    },
+    {
+      "qubits": 24,
+      "system": "H12/sto-3g/full",
+      "dtype": "complex128",
+      "n_pauli_terms": 14905,
+      "hf_energy": -6.254217482308491,
+      "t_sparse": 99.01,
+      "t_build": 0.02,
+      "state_GB_theoretical": 0.27,
+      "vram_delta_GB": 0.25,
+      "vram_used_GB": 1.99,
+      "norm": 0.9999999999999989,
+      "norm_dev": 1.1102230246251565e-15,
+      "norm_ok": true,
+      "sum_z": -2.4551714193914473,
+      "t_sumz": 0.13,
+      "energy_H": -0.14713919638366174,
+      "t_expect_H": 78.82,
+      "energy_ge_lower_bound": true,
+      "energy_finite_real": true,
+      "cpu_overlap": 1.0,
+      "cpu_overlap_ok": true,
+      "cpu_energy_H": -0.14713919638366801,
+      "energy_parity_dE": 6.2727600891321345e-15,
+      "ok": true
+    },
+    {
+      "qubits": 28,
+      "system": "H14/sto-3g/full",
+      "dtype": "complex128",
+      "n_pauli_terms": 27735,
+      "hf_energy": -7.294620477820185,
+      "t_sparse": 358.98,
+      "t_build": 0.3,
+      "state_GB_theoretical": 4.29,
+      "vram_delta_GB": 4.03,
+      "vram_used_GB": 6.02,
+      "norm": 1.0000000000000202,
+      "norm_dev": 2.020605904817785e-14,
+      "norm_ok": true,
+      "sum_z": -0.4326135007153672,
+      "t_sumz": 0.15,
+      "energy_H": -0.6225372317493357,
+      "t_expect_H": 150.28,
+      "energy_ge_lower_bound": true,
+      "energy_finite_real": true,
+      "ok": true
+    },
+    {
+      "qubits": 32,
+      "system": "H16/sto-3g/full",
+      "dtype": "complex128",
+      "n_pauli_terms": 47489,
+      "hf_energy": -8.335175769057837,
+      "t_sparse": 1095.53,
+      "t_build": 5.11,
+      "state_GB_theoretical": 68.72,
+      "vram_delta_GB": 64.42,
+      "vram_used_GB": 71.15,
+      "norm": 0.9999999999999913,
+      "norm_dev": 8.659739592076221e-15,
+      "norm_ok": true,
+      "sum_z": 0.05029252636419204,
+      "t_sumz": 0.6,
+      "energy_H": -0.12136546786454866,
+      "t_expect_H": 1615.28,
+      "energy_ge_lower_bound": true,
+      "energy_finite_real": true,
+      "ok": true
+    },
+    {
+      "qubits": 34,
+      "system": "H17/sto-3g/full",
+      "dtype": "complex64",
+      "note": "capacity headline: no JW/<H> (c64); build + norm only",
+      "hf_energy": -8.833316545817475,
+      "t_scf": 0.17,
+      "n_gates": 170,
+      "state_GB_theoretical": 137.44,
+      "t_build": 11.02,
+      "vram_delta_GB": 137.96,
+      "vram_used_GB": 138.26,
+      "norm_method": "host_chunked",
+      "norm": 0.999999994720814,
+      "t_norm": 150.03,
+      "norm_dev": 5.279185977258294e-09,
+      "norm_ok": true,
+      "ok": true
+    }
+  ]
+}
