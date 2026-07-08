@@ -242,16 +242,25 @@ def _resolve_active_space(atoms, basis, charge, spin, spec=None):
 
 
 def _detci_det_cap(n_orbitals):
-    """Determinant-subspace cap sized to the node's GPU memory (det_ci holds the sparse subspace
-    Hamiltonian + a few CI vectors). A 192 GB MI300X ran 3M dets for FeMoco-108q; scale down as
-    the CI build (~n_orb^4) grows. Override with KANAD_DETCI_DET_CAP."""
+    """Determinant-subspace cap sized to the node's COMPUTE CAPACITY. The rocm-planck GPU det_ci
+    kernel holds a large subspace cheaply (a 192 GB MI300X ran 3M dets for FeMoco-108q); without
+    it, the CPU pyscf selected-CI fallback is far slower, so cap much lower. Override with
+    KANAD_DETCI_DET_CAP."""
     import os
     env = os.environ.get("KANAD_DETCI_DET_CAP")
     if env:
         try:
-            return max(50_000, int(env))
+            return max(20_000, int(env))
         except ValueError:
             pass
+    gpu = False
+    try:
+        from planck.det_ci import has_gpu_det_ci
+        gpu = bool(has_gpu_det_ci())
+    except Exception:
+        gpu = False
+    if not gpu:
+        return 120_000  # CPU pyscf fallback — keep the selected-CI diagonalization tractable
     if n_orbitals > 40:
         return 1_000_000
     if n_orbitals > 24:
