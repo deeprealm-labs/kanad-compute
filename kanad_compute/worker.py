@@ -86,12 +86,19 @@ _TRANSITION_METALS = {
     'Y', 'Zr', 'Nb', 'Mo', 'Tc', 'Ru', 'Rh', 'Pd', 'Ag', 'Cd',
     'Hf', 'Ta', 'W', 'Re', 'Os', 'Ir', 'Pt', 'Au', 'Hg',
 }
-# Keep the SQD subspace tractable on the GPU: ~10 active orbitals (≈20 qubits)
-# → CASCI ~6e4 dets, det_ci in seconds. 12 orbitals (CASCI ~8.5e5) starts to drag.
+# AUTO-reduction target when the app doesn't specify an active space: ~10 active orbitals
+# (≈20 qubits) → CASCI ~6e4 dets, det_ci in seconds. 12 orbitals (CASCI ~8.5e5) starts to drag.
 _AS_MAX_ACTIVE_ORBITALS = 10
 # Full systems at/under this qubit count skip the reduction entirely (small molecules
 # run full-space, exactly as before — C2/O2/N2/CO etc. are unaffected).
 _AS_FULL_QUBIT_BUDGET = 24
+# EXPLICIT user active space (the FeMoco-class path): the classical rocm-planck det_ci selected-CI
+# engine on the GPU handles far more than statevector sampling can. Cap by orbital count (the CI
+# matrix build scales ~n_orb^4), not the auto 10-orbital target. Reiher FeMoco = 54 orbitals/108q.
+_AS_EXPLICIT_MAX_ORBITALS = 60
+# Above this active-qubit count, building/sampling a statevector is infeasible — an explicit large
+# active space runs on the classical GPU selected-CI engine (det_ci) instead of quantum sampling.
+_SV_SAMPLING_MAX_QUBITS = 26
 
 
 def _maybe_reduce_active_space(atoms, basis, charge, spin):
@@ -158,6 +165,171 @@ def _maybe_reduce_active_space(atoms, basis, charge, spin):
                 full_q, info["active_qubits"], method,
                 info["active_electrons"], info["active_orbitals"], mf.converged)
     return ham, info
+
+
+def _resolve_active_space(atoms, basis, charge, spin, spec=None):
+    """Return (active_space_Hamiltonian, info) honoring an EXPLICIT user active-space `spec`,
+    else fall back to the automatic valence reduction (`_maybe_reduce_active_space`).
+
+    `spec` (forwarded by the app) drives it — the metalloenzyme / metal-cluster workflow:
+        {method: 'auto'|'cas'|'avas'|'frontier',
+         n_electrons, n_orbitals,        # cas: CAS(n,m) around the Fermi level
+         n_occ, n_virt,                  # frontier: explicit HOMO/LUMO window
+         avas_labels: ['Fe 3d','S 3p'],  # avas: AO-projected (best for metal d-manifolds)
+         threshold}
+    Explicit spaces are NOT clamped to the auto 10-orbital cap — the classical GPU det_ci engine
+    handles far larger (Reiher FeMoco = 54 orbitals/108q). Capacity-gated at _AS_EXPLICIT_MAX_ORBITALS.
+    """
+    method = (spec or {}).get("method") or "auto"
+    if method in ("auto", "", None):
+        return _maybe_reduce_active_space(atoms, basis, charge, spin)
+
+    from pyscf import scf
+    from kanad.core.active_space import ActiveSpaceSelector, build_active_space_hamiltonian
+    mol = _build_pyscf_mol(atoms, basis, charge)
+    if spin:
+        mol.spin = int(spin)
+    tms = sorted({a["symbol"] for a in atoms if a["symbol"] in _TRANSITION_METALS})
+    base = scf.ROHF(mol) if spin else scf.RHF(mol)
+    mf = base.newton() if tms else base          # 2nd-order SCF for transition metals (Cr2/Fe2)
+    mf.max_cycle = 200
+    if not tms:
+        mf.level_shift = 0.3
+    mf.kernel()
+
+    sel = ActiveSpaceSelector(mf)
+    if method == "avas":
+        labels = list(spec.get("avas_labels") or []) or [
+            f"{s} {sh}" for s in (tms or []) for sh in ("3d", "4d", "5d")]
+        if not labels:
+            raise ValueError("AVAS active space needs orbital labels, e.g. ['Fe 3d','S 3p']")
+        aspace = sel.avas(labels, threshold=float(spec.get("threshold", 0.2)))
+        desc = f"AVAS({', '.join(labels)}; thr={spec.get('threshold', 0.2)})"
+    elif method in ("cas", "manual", "frontier"):
+        no = int(spec.get("n_orbitals") or 0)
+        ne = int(spec.get("n_electrons") or 0)
+        if spec.get("n_occ") and spec.get("n_virt"):
+            n_occ, n_virt = int(spec["n_occ"]), int(spec["n_virt"])
+        else:
+            if no < 2:
+                raise ValueError("CAS active space needs n_orbitals >= 2")
+            n_occ = max(1, (ne // 2) if ne else (no // 2))
+            n_virt = max(1, no - n_occ)
+        aspace = sel.frontier(n_occ, n_virt)
+        desc = f"CAS({ne or 2 * n_occ}e,{no or n_occ + n_virt}o)->frontier({n_occ},{n_virt})"
+    else:
+        raise ValueError(f"unknown active_space method {method!r} (use cas|avas|frontier|auto)")
+
+    ham = build_active_space_hamiltonian(mf, aspace)
+    nq = 2 * ham.n_orbitals
+    if ham.n_orbitals > _AS_EXPLICIT_MAX_ORBITALS:
+        raise ValueError(
+            f"active space {ham.n_electrons}e,{ham.n_orbitals}o ({nq} qubits) exceeds this node's "
+            f"budget of {_AS_EXPLICIT_MAX_ORBITALS} orbitals ({2 * _AS_EXPLICIT_MAX_ORBITALS} qubits)")
+    info = {
+        "active_orbitals": int(ham.n_orbitals),
+        "active_electrons": int(ham.n_electrons),
+        "active_qubits": int(nq),
+        "full_qubits": int(2 * mol.nao_nr()),
+        "method": desc,
+        "requested": method,
+        "scf_converged": bool(mf.converged),
+        "explicit": True,
+    }
+    logger.info("Explicit active space: %s -> %de,%do (%dq); SCF converged=%s",
+                desc, info["active_electrons"], info["active_orbitals"], nq, mf.converged)
+    return ham, info
+
+
+def _detci_det_cap(n_orbitals):
+    """Determinant-subspace cap sized to the node's GPU memory (det_ci holds the sparse subspace
+    Hamiltonian + a few CI vectors). A 192 GB MI300X ran 3M dets for FeMoco-108q; scale down as
+    the CI build (~n_orb^4) grows. Override with KANAD_DETCI_DET_CAP."""
+    import os
+    env = os.environ.get("KANAD_DETCI_DET_CAP")
+    if env:
+        try:
+            return max(50_000, int(env))
+        except ValueError:
+            pass
+    if n_orbitals > 40:
+        return 1_000_000
+    if n_orbitals > 24:
+        return 2_000_000
+    return 3_000_000
+
+
+def _run_detci_sqd(ham, spin=0, device="amd", max_rounds=8, expand_top=150,
+                   det_cap=None, phase_cb=None):
+    """Classical GPU selected-CI SQD (rocm-planck det_ci) — the SCALABLE engine for large active
+    spaces where statevector sampling is infeasible (metal clusters, metalloenzyme cores). This is
+    the exact engine the FeMoco/[2Fe-2S] campaigns used: CISD-seed -> det_ci diagonalize -> expand
+    from the dominant determinants -> repeat toward FCI-in-active-space. planck.det_ci is called
+    directly (the diagonalize_pyscf wrapper does slow O(n_det^2) CPU preprocessing at scale)."""
+    import numpy as _np
+    from kanad.core.ci.slater_condon import _generate_singles_doubles
+    try:
+        from planck.det_ci import det_ci
+    except Exception as e:  # pragma: no cover - node without the GPU engine
+        raise RuntimeError(
+            "Large active-space SQD needs the rocm-planck GPU engine (planck.det_ci). Install it "
+            "on this node: kanad-compute install-gpu --platform amd") from e
+
+    no, ne = ham.n_orbitals, ham.n_electrons
+    nq = 2 * no
+    na = (ne + int(spin)) // 2
+    nb = ne - na
+    if det_cap is None:
+        det_cap = _detci_det_cap(no)
+
+    def _emit(msg, phase="diagonalizing", **x):
+        logger.info("[detci-SQD] %s", msg)
+        if phase_cb:
+            try:
+                phase_cb({"phase": phase, "message": msg, **x})
+            except Exception:
+                pass
+
+    _emit(f"Classical GPU selected-CI (rocm-planck det_ci): {ne}e,{no}o ({nq}q), "
+          f"na={na} nb={nb}, det cap {det_cap:,}", phase="active_space")
+
+    hf = 0
+    for p in range(na):
+        hf |= 1 << (2 * p)
+    for p in range(nb):
+        hf |= 1 << (2 * p + 1)
+    dets = sorted({hf} | _generate_singles_doubles(hf, nq, ne))
+    E = dev = None
+    for it in range(max_rounds):
+        r = det_ci(ham.h_core, ham.eri, ham.nuclear_repulsion, dets, no, ne, device=device)
+        E = float(r.energies[0]); ev = _np.asarray(r.ci_vectors)[:, 0]; dev = r.device_used
+        _emit(f"round {it}: {len(dets):,} dets  E={E:.6f} Ha  [{dev}]",
+              energy=E, n_determinants=len(dets), round=it)
+        if len(ev) != len(dets):
+            ev = ev[:len(dets)] if len(ev) > len(dets) else _np.pad(ev, (0, len(dets) - len(ev)))
+        idx = _np.argsort(-_np.abs(ev))[:expand_top]
+        nd = set(dets); capped = False
+        for i in idx:
+            if len(nd) > det_cap:
+                capped = True
+                break
+            nd |= _generate_singles_doubles(int(dets[i]), nq, ne)
+        if len(nd) == len(dets):
+            break
+        dets = sorted(nd)[:det_cap] if capped else sorted(nd)
+        if capped:
+            r = det_ci(ham.h_core, ham.eri, ham.nuclear_repulsion, dets, no, ne, device=device)
+            E = float(r.energies[0]); dev = r.device_used
+            _emit(f"round {it}+cap: {len(dets):,} dets  E={E:.6f} Ha  [{dev}]", energy=E)
+            break
+    return {
+        "energy": E,
+        "n_qubits": nq,
+        "n_determinants": len(dets),
+        "device_used": dev,
+        "solver_used": "detci_sqd",
+        "converged": True,
+    }
 
 
 def _resolve_sv_backend(backend_type: str, gpu_device: str = "auto", gpu_enabled: bool = False) -> str:
@@ -360,6 +532,7 @@ def run_calculation(job: dict, gpu_enabled: bool = False, gpu_device: str = "aut
                     ibm_token=job.get("ibm_api_token"), ibm_crn=ibm_crn,
                     ibm_backend=job.get("ibm_backend_name"),
                     n_samples=_n_samples, spin=spin, phase_cb=_phase,
+                    active_space=job.get("active_space"),
                 )
                 # Record WHERE the state was actually sampled so the app never has to
                 # guess whether the QPU ran (the fallback below is otherwise invisible).
@@ -380,6 +553,7 @@ def run_calculation(job: dict, gpu_enabled: bool = False, gpu_device: str = "aut
                         atoms, basis, charge, "statevector", gpu_device,
                         ibm_token=None, ibm_crn=None, ibm_backend=None,
                         n_samples=_n_samples, spin=spin, phase_cb=_phase,
+                        active_space=job.get("active_space"),
                     )
                     sol_result["sampling_backend_used"] = "statevector"
                     sol_result["sampling_requested"] = _samp
@@ -391,7 +565,15 @@ def run_calculation(job: dict, gpu_enabled: bool = False, gpu_device: str = "aut
                 else:
                     raise
         elif solver_type == "sqd":
-            sol_result = _run_sqd(atoms, basis, charge, spin=spin)
+            _as = job.get("active_space")
+            if _as and (_as.get("method") or "auto") != "auto":
+                # Explicit active space → resolve + (if large) run classical GPU det_ci SQD.
+                sol_result = _run_sampling_sqd(
+                    atoms, basis, charge, "statevector", gpu_device,
+                    n_samples=int(job.get("shots") or 4000), spin=spin, phase_cb=_phase,
+                    active_space=_as)
+            else:
+                sol_result = _run_sqd(atoms, basis, charge, spin=spin)
         elif solver_type == "krylov_sqd":
             sol_result = _run_krylov_sqd(atoms, basis, charge, spin=spin)
         elif solver_type == "vqe":
@@ -968,7 +1150,8 @@ def _sqd_ao_1rdm(solver, ham):
 
 def _run_sampling_sqd(atoms, basis, charge, sampling_backend, gpu_device,
                       ibm_token=None, ibm_crn=None, ibm_backend=None, n_samples=4000, spin=0,
-                      rounds=3, expansion_per_round=24, energy_tol=1e-4, phase_cb=None) -> dict:
+                      rounds=3, expansion_per_round=24, energy_tol=1e-4, phase_cb=None,
+                      active_space=None) -> dict:
     """The flagship hybrid SQD: quantum sampling (QPU/statevector) + classical
     diagonalization on the GPU node via rocm-planck det_ci (gpu_device).
     Uses a kanad Molecule so polyatomic + open-shell (spin) systems work.
@@ -1002,9 +1185,21 @@ def _run_sampling_sqd(atoms, basis, charge, sampling_backend, gpu_device,
     # Large / strongly-correlated systems (transition-metal dimers & clusters) get an
     # automatic valence active-space reduction so the sampled subspace + det_ci stay
     # tractable; small molecules (≤24q full) run the full space unchanged.
-    as_ham, as_info = _maybe_reduce_active_space(atoms, basis, charge, spin)
+    as_ham, as_info = _resolve_active_space(atoms, basis, charge, spin, active_space)
     if as_ham is not None:
         ham = as_ham
+        # Large active space (metal cluster / metalloenzyme core): a 2^n statevector can't be built
+        # to sample, and QPU sampling adds nothing at that scale — run the classical GPU selected-CI
+        # engine (rocm-planck det_ci) directly, exactly as the FeMoco/[2Fe-2S] campaigns did.
+        if 2 * ham.n_orbitals > _SV_SAMPLING_MAX_QUBITS:
+            _emit(f"Active space {as_info['active_qubits']}q exceeds statevector sampling "
+                  f"({_SV_SAMPLING_MAX_QUBITS}q) — classical GPU det_ci SQD", phase="active_space")
+            res = _run_detci_sqd(ham, spin=spin, device=gpu_device, phase_cb=phase_cb)
+            res["active_space"] = as_info
+            res["sampling_backend_used"] = "classical_detci"
+            _emit(f"Complete: E={res['energy']:.6f} Ha  "
+                  f"({res['n_determinants']:,} dets, {res.get('device_used')})", phase="complete")
+            return res
         # A valence active space is, by construction, the strongly-correlated core of the
         # system — its CASDI subspace is far denser than a small diatomic's, so the
         # 24/round expansion tuned for C2/O2 balloons it and stalls. Tamer rounds keep

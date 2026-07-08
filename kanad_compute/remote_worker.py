@@ -280,6 +280,11 @@ def _execute_job(job: dict, config: dict, progress_cb=None, cancel_check=None) -
         "ibm_backend_name": job.get("ibm_backend_name"),
         "ionq_api_key": job.get("ionq_api_key"),
         "custom_solver": job.get("custom_solver"),
+        # Explicit active space (metal clusters / metalloenzyme cores): {method, n_electrons,
+        # n_orbitals, avas_labels, threshold}. Drives _resolve_active_space; large spaces run
+        # on the classical GPU det_ci selected-CI engine. None → automatic valence reduction.
+        "active_space": job.get("active_space"),
+        "shots": job.get("shots"),
         # force_qpu: node config (all jobs) OR per-job flag — no silent statevector fallback.
         "force_qpu": bool(config.get("force_qpu")) or bool(job.get("force_qpu")),
         # Whole-workflow runners (_run_dynamics / _run_reaction / _run_materials /
