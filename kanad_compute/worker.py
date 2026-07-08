@@ -268,12 +268,11 @@ def _run_detci_sqd(ham, spin=0, device="amd", max_rounds=8, expand_top=150,
     directly (the diagonalize_pyscf wrapper does slow O(n_det^2) CPU preprocessing at scale)."""
     import numpy as _np
     from kanad.core.ci.slater_condon import _generate_singles_doubles
-    try:
-        from planck.det_ci import det_ci
-    except Exception as e:  # pragma: no cover - node without the GPU engine
-        raise RuntimeError(
-            "Large active-space SQD needs the rocm-planck GPU engine (planck.det_ci). Install it "
-            "on this node: kanad-compute install-gpu --platform amd") from e
+    # diagonalize_pyscf auto-routes to rocm-planck's GPU det_ci when the kernel is present
+    # (device='amd') and falls back to CPU pyscf otherwise — so large active-space SQD runs on any
+    # node, GPU-accelerated where det_ci exists. (The public rocm-planck currently ships only the
+    # statevector kernels; det_ci makes FeMoco-108q-scale practical once it lands there.)
+    from kanad.core.ci.selected_ci import diagonalize_pyscf
 
     no, ne = ham.n_orbitals, ham.n_electrons
     nq = 2 * no
@@ -301,8 +300,9 @@ def _run_detci_sqd(ham, spin=0, device="amd", max_rounds=8, expand_top=150,
     dets = sorted({hf} | _generate_singles_doubles(hf, nq, ne))
     E = dev = None
     for it in range(max_rounds):
-        r = det_ci(ham.h_core, ham.eri, ham.nuclear_repulsion, dets, no, ne, device=device)
-        E = float(r.energies[0]); ev = _np.asarray(r.ci_vectors)[:, 0]; dev = r.device_used
+        r = diagonalize_pyscf(dets, ham.h_core, ham.eri, ham.nuclear_repulsion, no, ne,
+                              target_sz=(na - nb) / 2.0, device=device)
+        E = float(r["energy"]); ev = _np.asarray(r["eigenvector"]); dev = r.get("device_used", "cpu")
         _emit(f"round {it}: {len(dets):,} dets  E={E:.6f} Ha  [{dev}]",
               energy=E, n_determinants=len(dets), round=it)
         if len(ev) != len(dets):
@@ -318,8 +318,9 @@ def _run_detci_sqd(ham, spin=0, device="amd", max_rounds=8, expand_top=150,
             break
         dets = sorted(nd)[:det_cap] if capped else sorted(nd)
         if capped:
-            r = det_ci(ham.h_core, ham.eri, ham.nuclear_repulsion, dets, no, ne, device=device)
-            E = float(r.energies[0]); dev = r.device_used
+            r = diagonalize_pyscf(dets, ham.h_core, ham.eri, ham.nuclear_repulsion, no, ne,
+                                  target_sz=(na - nb) / 2.0, device=device)
+            E = float(r["energy"]); dev = r.get("device_used", "cpu")
             _emit(f"round {it}+cap: {len(dets):,} dets  E={E:.6f} Ha  [{dev}]", energy=E)
             break
     return {
