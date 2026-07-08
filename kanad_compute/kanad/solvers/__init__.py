@@ -109,17 +109,18 @@ __all__ = [
 from kanad.solvers.meta import SolverMeta as _SolverMeta
 
 VQESolver.META = _SolverMeta(
-    name="vqe", domains={"ground_state", "reaction"}, capabilities={"energy", "one_rdm"},
-    max_qubits=14,
+    name="vqe", domains={"ground_state", "reaction"},
+    capabilities={"energy", "one_rdm", "dipole"}, max_qubits=14,
     description="Variational quantum eigensolver (HEA / Givens-SD ansätze). "
                 "Energy-capable across geometries → usable for reaction PES (forces "
                 "for MD require a ForceProvider; see PhysicsVQE / SamplingSQDSolver).",
 )
 PhysicsVQE.META = _SolverMeta(
     name="physics_vqe", domains={"ground_state", "md", "reaction"},
-    capabilities={"energy", "nuclear_gradient"}, analytic_gradient=False,
+    capabilities={"energy", "nuclear_gradient", "hessian"}, analytic_gradient=False,
     description="MP2-ranked excitation VQE; chemical accuracy on Tier-1 mains. "
-                "Force-capable (FD over a geometry-rebuild energy closure) for MD/reactions.",
+                "Force- and Hessian-capable (FD over a geometry-rebuild energy closure) "
+                "for MD/reactions/vibrational analysis.",
 )
 HardwareVQE.META = _SolverMeta(
     name="hardware_vqe", domains={"ground_state", "reaction"}, capabilities={"energy"},
@@ -132,14 +133,17 @@ CISolver.META = _SolverMeta(
     description="Classical CI in a sampled subspace.",
 )
 DeterministicCI.META = _SolverMeta(
-    name="deterministic_ci", domains={"ground_state"}, capabilities={"energy", "one_rdm"},
+    name="deterministic_ci", domains={"ground_state"},
+    capabilities={"energy", "one_rdm", "dipole"},
     description="Deterministic HF + singles/doubles CI on explicit statevectors.",
 )
 SamplingSQDSolver.META = _SolverMeta(
     name="sampling_sqd", domains={"ground_state", "md", "reaction"},
-    capabilities={"energy", "nuclear_gradient"}, analytic_gradient=False,
+    capabilities={"energy", "nuclear_gradient", "hessian", "field_response"},
+    analytic_gradient=False,
     description="Sample-based quantum diagonalization (circuit sampling + recovery). "
-                "Force-capable (FD over a geometry-rebuild + LUCJ re-solve) for MD/reactions.",
+                "Force-, Hessian- and field-response-capable (FD over a geometry-rebuild + "
+                "correlated LUCJ re-solve) for MD/reactions/vibrational + polarizability/Raman.",
 )
 LanczosSolver.META = _SolverMeta(
     name="lanczos", domains={"ground_state", "photochemistry"},

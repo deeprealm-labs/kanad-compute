@@ -419,6 +419,7 @@ class PropertyCalculator:
         self,
         wavefunction: str = 'hf',
         geom_step_bohr: float = 0.005,
+        hessian: Optional[np.ndarray] = None,
     ) -> Dict[str, Any]:
         """Vibrational frequencies + IR intensities.
 
@@ -456,24 +457,42 @@ class PropertyCalculator:
                 "compute_ir_spectrum requires a PySCF mol on the Hamiltonian."
             )
 
-        from pyscf import scf
-        from pyscf.hessian import rhf as hessian_rhf
-
-        # 1. Build PySCF mf at equilibrium
         mol_eq = self.mol
-        mf_eq = scf.RHF(mol_eq).run(verbose=0)
-        if not mf_eq.converged:
-            raise RuntimeError("Equilibrium HF did not converge — IR cannot proceed.")
-
-        # 2. Analytical Hessian (Ha / Bohr²)
-        hess_obj = hessian_rhf.Hessian(mf_eq)
-        hess = hess_obj.kernel()  # shape (n_atoms, n_atoms, 3, 3)
         n_atoms = mol_eq.natm
-        H_matrix = hess.transpose(0, 2, 1, 3).reshape(3 * n_atoms, 3 * n_atoms)
-        H_matrix = 0.5 * (H_matrix + H_matrix.T)  # symmetrize
+
+        if hessian is not None:
+            # FULLY-QUANTUM IR: normal modes come from an injected wavefunction Hessian
+            # (e.g. PhysicsVQE/SamplingSQD ``hessian(atoms).hessian`` — capability
+            # 'hessian'), so BOTH the mode vectors and the dipole derivatives are
+            # correlated. The matrix must be the (3N,3N) Cartesian Hessian in Ha/Bohr².
+            H_matrix = np.asarray(hessian, dtype=float)
+            if H_matrix.shape != (3 * n_atoms, 3 * n_atoms):
+                raise ValueError(
+                    f"injected hessian shape {H_matrix.shape} != {(3 * n_atoms, 3 * n_atoms)}"
+                )
+            H_matrix = 0.5 * (H_matrix + H_matrix.T)  # symmetrize
+            hessian_source = 'quantum'
+        else:
+            # HF analytical Hessian for the mode vectors (classical modes; the dipole
+            # derivatives can still be quantum via wavefunction='vqe').
+            from pyscf import scf
+            from pyscf.hessian import rhf as hessian_rhf
+            mf_eq = scf.RHF(mol_eq).run(verbose=0)
+            if not mf_eq.converged:
+                raise RuntimeError("Equilibrium HF did not converge — IR cannot proceed.")
+            hess_obj = hessian_rhf.Hessian(mf_eq)
+            hess = hess_obj.kernel()  # shape (n_atoms, n_atoms, 3, 3)
+            H_matrix = hess.transpose(0, 2, 1, 3).reshape(3 * n_atoms, 3 * n_atoms)
+            H_matrix = 0.5 * (H_matrix + H_matrix.T)  # symmetrize
+            hessian_source = 'hf'
 
         # 3. Mass-weighted Hessian
-        atom_masses = np.asarray(mol_eq.atom_mass_list())  # amu
+        # Standard atomic weights (isotope-averaged) — the conventional choice for
+        # vibrational frequencies AND consistent with the solver `hessian` capability's
+        # masses (BaseSolver._hessian_masses_amu), so an injected quantum Hessian yields
+        # the same frequency here as core.harmonic does. Without isotope_avg the default
+        # integer isotope masses (H=1, He=4) drift the frequency ~0.3% vs the solver.
+        atom_masses = np.asarray(mol_eq.atom_mass_list(isotope_avg=True))  # amu
         from kanad.core.constants.conversion_factors import ConversionFactors
         masses_au = atom_masses * 1822.888486209  # amu → m_e (atomic mass units of electron)
         sqrt_m_inv = 1.0 / np.sqrt(np.repeat(masses_au, 3))
@@ -530,7 +549,8 @@ class PropertyCalculator:
             'frequencies': freqs_active,
             'ir_intensities': ir_intensities,
             'dipole_derivatives': dmu_dQ,
-            'wavefunction': wf_l,
+            'wavefunction': wf_l,            # dipole-derivative source: 'hf' | 'vqe'
+            'hessian_source': hessian_source,  # normal-mode source: 'hf' | 'quantum'
             'n_modes': n_modes,
         }
 

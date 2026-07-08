@@ -48,3 +48,23 @@ def compute_r2(mol, origin=(0.0, 0.0, 0.0)) -> np.ndarray:
     """
     with mol.with_common_orig(tuple(origin)):
         return np.asarray(mol.intor('int1e_r2'))
+
+
+def compute_angular_momentum(mol, origin=(0.0, 0.0, 0.0)) -> np.ndarray:
+    """AO orbital angular momentum ``<p| i (r_O × p) |q>`` about ``origin``, shape
+    ``(3, nao, nao)``. This is ``int1e_cg_irxp`` — the REAL antisymmetric matrix of
+    ``i·L`` (L = r_O × p). Used as the external-magnetic-field (orbital Zeeman) operator
+    in the NMR paramagnetic sum-over-states. The physical L is ``-i`` times this matrix.
+    """
+    with mol.with_common_origin(tuple(origin)):
+        return np.asarray(mol.intor('int1e_cg_irxp', comp=3))
+
+
+def compute_pso(mol, nucleus_coord) -> np.ndarray:
+    """AO paramagnetic spin-orbital (PSO) integrals ``<p| i (r_N × p)/|r_N|^3 |q>`` about
+    the nucleus at ``nucleus_coord``, shape ``(3, nao, nao)``. This is ``int1e_prinvxp``
+    with the 1/r origin at the nucleus — the REAL antisymmetric matrix of ``i·(L_N/r_N^3)``.
+    It is the nuclear-magnetic-moment response operator in the NMR paramagnetic term.
+    """
+    with mol.with_rinv_origin(tuple(nucleus_coord)):
+        return np.asarray(mol.intor('int1e_prinvxp', comp=3))

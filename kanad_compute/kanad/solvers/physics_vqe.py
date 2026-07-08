@@ -34,7 +34,7 @@ from qiskit.circuit.library import PauliEvolutionGate
 from qiskit.synthesis import LieTrotter
 
 from kanad.solvers.base_solver import BaseSolver
-from kanad.solvers.capabilities import FiniteDifferenceForceMixin
+from kanad.solvers.capabilities import FiniteDifferenceForceMixin, FiniteDifferenceHessianMixin
 from kanad.core.solver_result import SolverResult
 
 logger = logging.getLogger(__name__)
@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 _BOHR_TO_ANGSTROM = 0.52917721092
 
 
-class PhysicsVQE(FiniteDifferenceForceMixin, BaseSolver):
+class PhysicsVQE(FiniteDifferenceForceMixin, FiniteDifferenceHessianMixin, BaseSolver):
     """
     Physics-driven VQE that achieves chemical accuracy with minimal evaluations.
 
