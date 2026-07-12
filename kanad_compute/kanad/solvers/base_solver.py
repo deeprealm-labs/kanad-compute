@@ -92,6 +92,56 @@ class BaseSolver(ABC):
                 )
         return rdm
 
+    def get_dipole(self, *, origin=None) -> np.ndarray:
+        """Electric dipole moment vector (a.u.) from the correlated 1-RDM (capability
+        ``"dipole"``): ``μ = Σ_A Z_A R_A − Tr(P_AO · r_AO)``.
+
+        Flows through the same honest 1-RDM channel as :meth:`get_one_rdm` — it embeds
+        the (active-)MO density onto the Hamiltonian via ``set_quantum_density_matrix``
+        and evaluates with ``PropertyCalculator(method='vqe')``, which raises rather than
+        silently substituting HF. Declared only by solvers whose default construction
+        yields a genuinely correlated 1-RDM (VQESolver, DeterministicCI); NOT by
+        SamplingSQD, whose default non-entangling circuit collapses to HF. Call
+        ``solve()`` first."""
+        if not self.has_capability("dipole"):
+            raise NotImplementedError(
+                f"{type(self).__name__} does not declare the 'dipole' capability"
+            )
+        rdm_mo = self.get_one_rdm(basis="mo")  # honest: raises on trace mismatch
+        ham = self.hamiltonian
+        if getattr(ham, "_quantum_density_matrix_ao", None) is None \
+                and hasattr(ham, "set_quantum_density_matrix"):
+            ham.set_quantum_density_matrix(rdm_mo)
+        from kanad.analysis.property_calculator import PropertyCalculator
+        pc = PropertyCalculator(ham)
+        res = pc.compute_dipole_moment(origin=origin, method="vqe")
+        return np.asarray(res["dipole_au"], dtype=float)
+
+    def _hessian_masses_amu(self):
+        """Ordered atomic masses (amu) for the harmonic analysis in the ``hessian``
+        capability, in the SAME atom order as the geometry passed to ``energy_fn`` /
+        ``hessian`` (i.e. the PySCF-mol rebuild order). Returns ``None`` when no mass
+        source is available, so the Hessian mixin returns a raw matrix rather than a
+        fabricated spectrum. Prefer the PySCF mol (guaranteed to match ``energy_fn``'s
+        symbol order); fall back to the resolved ``self.atoms``."""
+        mol = getattr(self, "pyscf_mol", None)
+        if mol is None:
+            mol = getattr(self.hamiltonian, "mol", None)
+        if mol is not None:
+            try:
+                return np.asarray(mol.atom_mass_list(isotope_avg=True), dtype=float)
+            except Exception:
+                try:
+                    return np.asarray(mol.atom_mass_list(), dtype=float)
+                except Exception:
+                    pass
+        atoms = getattr(self, "atoms", None)
+        if atoms:
+            masses = [getattr(a, "atomic_mass", None) for a in atoms]
+            if all(m is not None for m in masses):
+                return np.asarray(masses, dtype=float)
+        return None
+
     def __init__(
         self,
         system,

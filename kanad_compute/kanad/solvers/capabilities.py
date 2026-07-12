@@ -189,8 +189,18 @@ class FiniteDifferenceForceMixin:
 
 
 class FiniteDifferenceHessianMixin:
-    """Default ``hessian`` via FD over ``nuclear_gradient``. Frequencies left to the
-    analysis layer (``FrequencyCalculator.compute_frequencies(hessian=...)``)."""
+    """Default ``hessian`` via central FD over ``nuclear_gradient`` (itself FD over the
+    quantum ``energy_fn``) → a **quantum** Cartesian Hessian, then the shared harmonic
+    analysis (``core.harmonic``) fills frequencies / normal modes / reduced masses / ZPE.
+
+    Cost: O((3N)²) gradient evaluations, each itself O(3N) energy re-solves — feasible for
+    small molecules only; gate on system size upstream. Frequencies are physically
+    meaningful only at a stationary point (∇E ≈ 0); off a minimum the Hessian matrix is
+    still valid but the projected spectrum is not a true harmonic spectrum.
+
+    Masses come from :meth:`BaseSolver._hessian_masses_amu` in the SAME atom order as
+    ``atoms_bohr`` (the ``energy_fn`` rebuild order). If masses are unavailable the raw
+    Hessian is returned with an empty spectrum rather than a fabricated one (honesty)."""
     _FD_DELTA_BOHR = 0.01
 
     def hessian(self, atoms_bohr: np.ndarray, *,
@@ -208,9 +218,23 @@ class FiniteDifferenceHessianMixin:
                 g_dn = self.nuclear_gradient(dn, warm_state=warm_state).gradient.ravel()  # type: ignore[attr-defined]
                 H[3 * i + ki, :] = (g_up - g_dn) / (2 * d)
         H = 0.5 * (H + H.T)  # symmetrize
-        return HessianResult(hessian=H, frequencies_cm=np.array([]),
-                             normal_modes=np.zeros((dim, 0)),
-                             reduced_masses=np.array([]), n_imaginary=0, zpe_ha=0.0)
+
+        masses = None
+        get_masses = getattr(self, "_hessian_masses_amu", None)
+        if callable(get_masses):
+            masses = get_masses()  # type: ignore[misc]
+        if masses is None:
+            # No mass information → return the raw Hessian without fabricating a spectrum.
+            return HessianResult(hessian=H, frequencies_cm=np.array([]),
+                                 normal_modes=np.zeros((dim, 0)),
+                                 reduced_masses=np.array([]), n_imaginary=0, zpe_ha=0.0)
+
+        from kanad.core.harmonic import harmonic_analysis
+        ha = harmonic_analysis(H, atoms, np.asarray(masses, dtype=float))
+        return HessianResult(hessian=H, frequencies_cm=ha['frequencies_cm'],
+                             normal_modes=ha['normal_modes'],
+                             reduced_masses=ha['reduced_masses_amu'],
+                             n_imaginary=ha['n_imaginary'], zpe_ha=ha['zpe_ha'])
 
 
 __all__ = [

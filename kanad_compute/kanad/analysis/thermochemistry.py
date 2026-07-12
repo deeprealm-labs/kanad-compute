@@ -411,15 +411,24 @@ class ThermochemistryCalculator:
         self,
         temperature: float = 298.15,
         pressure: float = 101325.0,
-        method: str = 'HF'
+        method: str = 'HF',
+        e_elec: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         Compute thermodynamic properties at given T and P.
 
+        Fully-quantum thermochemistry: pass the correlated electronic energy from a solver
+        as ``e_elec`` AND construct this calculator with ``frequencies=`` taken from the
+        quantum Hessian capability (``solver.hessian(atoms).frequencies_cm``). Then E_elec,
+        the ZPE and S_vib all derive from the wavefunction rather than HF. ``e_elec``
+        overrides ``method``; leave it None for the classical HF/MP2 electronic energy.
+
         Args:
             temperature: Temperature (K), default 298.15
             pressure: Pressure (Pa), default 101325 (1 atm)
-            method: Electronic structure method ('HF', 'MP2')
+            method: Electronic structure method ('HF', 'MP2') used only when e_elec is None
+            e_elec: Pre-computed electronic energy (Ha); when given, used verbatim as the
+                electronic energy (e.g. the VQE/SQD total energy) — no HF/MP2 re-solve.
 
         Returns:
             Dictionary with:
@@ -443,8 +452,10 @@ class ThermochemistryCalculator:
         T = temperature
         P = pressure
 
-        # Electronic energy
-        if method.upper() == 'HF':
+        # Electronic energy — a caller-supplied (e.g. VQE/SQD correlated) energy wins.
+        if e_elec is not None:
+            E_elec = float(e_elec)
+        elif method.upper() == 'HF':
             ham = self.molecule.hamiltonian
             # Try different attribute names for HF energy
             if hasattr(ham, 'hf_energy'):

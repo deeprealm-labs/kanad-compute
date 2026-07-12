@@ -54,7 +54,7 @@ from qiskit import QuantumCircuit
 from qiskit.quantum_info import Statevector
 
 from kanad.solvers.base_solver import BaseSolver
-from kanad.solvers.capabilities import FiniteDifferenceForceMixin
+from kanad.solvers.capabilities import FiniteDifferenceForceMixin, FiniteDifferenceHessianMixin
 from kanad.core.solver_result import SolverResult
 
 logger = logging.getLogger(__name__)
@@ -319,7 +319,7 @@ def _sample_circuit_ibm(qc: QuantumCircuit, n_samples: int,
 # Sampling-based SQD solver
 # ---------------------------------------------------------------------------
 
-class SamplingSQDSolver(FiniteDifferenceForceMixin, BaseSolver):
+class SamplingSQDSolver(FiniteDifferenceForceMixin, FiniteDifferenceHessianMixin, BaseSolver):
     """IBM-style sample-based quantum diagonalization.
 
     Parameters
@@ -722,6 +722,82 @@ class SamplingSQDSolver(FiniteDifferenceForceMixin, BaseSolver):
             return float(res['energy']), res.get('determinants')
 
         return _energy
+
+    def energy_under_field(self, atoms_bohr: np.ndarray,
+                           e_field: np.ndarray, b_field: Optional[np.ndarray] = None,
+                           *, warm_state: Optional[Any] = None) -> tuple:
+        """Capability ``"field_response"``: total energy under a static uniform electric
+        field (length gauge, ``H = H0 − μ·E``). Rebuilds the molecule at ``atoms_bohr``,
+        adds the electronic ``+Σ_i E_i·r_i`` term to the correlated one-body MO tensor, and
+        re-solves with a genuine LUCJ seed (never the vacuous HF-only subspace). Returns
+        ``(energy_Ha, warm_state)``. Consumers finite-difference this: the static dipole
+        polarizability is ``α = −d²E/dF²``.
+
+        Limits (honest): electric field only — a nonzero ``b_field`` raises (magnetic
+        response is Phase 7 / NMR). Full-orbital solves only — a frozen-core active space
+        raises, because the frozen density's field polarization is not yet folded in."""
+        import pyscf
+        from pyscf import scf
+        from kanad.core.active_space import ActiveSpaceSelector, build_active_space_hamiltonian
+        from kanad.core.ansatze import LUCJAnsatz
+
+        e_field = np.asarray(e_field, dtype=float)
+        if b_field is not None and np.any(np.abs(np.asarray(b_field, dtype=float)) > 1e-12):
+            raise NotImplementedError(
+                "energy_under_field: magnetic (B-field) response not implemented — "
+                "electric field only (magnetic shielding is Phase 7 / NMR)."
+            )
+        mol0 = getattr(self.hamiltonian, 'mol', None) or getattr(
+            getattr(self.hamiltonian, 'mf', None), 'mol', None
+        )
+        if mol0 is None:
+            raise RuntimeError("energy_under_field: no PySCF molecule available to rebuild geometry.")
+        aspace = getattr(self.hamiltonian, 'active_space', None)
+        if aspace is not None and len(getattr(aspace, 'frozen_indices', []) or []) > 0:
+            raise NotImplementedError(
+                "energy_under_field currently supports full-orbital solves only; this run uses "
+                "a frozen-core active space whose frozen-density field polarization is not yet "
+                "included. Use the full orbital set for polarizability/Raman."
+            )
+        symbols = [mol0.atom_symbol(i) for i in range(mol0.natm)]
+        basis, charge, spin = mol0.basis, mol0.charge, mol0.spin
+        c = np.asarray(atoms_bohr, dtype=float) * _BOHR_TO_ANGSTROM
+        atomstr = '; '.join(
+            f'{s} {c[i, 0]:.12f} {c[i, 1]:.12f} {c[i, 2]:.12f}' for i, s in enumerate(symbols)
+        )
+        m = pyscf.gto.M(atom=atomstr, basis=basis, charge=charge, spin=spin, verbose=0)
+        mf = (scf.ROHF(m) if spin else scf.RHF(m)).run(verbose=0)
+        sel = ActiveSpaceSelector(mf).manual(frozen=[], active=list(range(m.nao_nr())))
+        ham = build_active_space_hamiltonian(mf, sel)
+
+        # Electric-dipole one-body integrals in the MO basis: d_mo[x] = Cᵀ ⟨p|r|q⟩ C.
+        d_ao = m.intor('int1e_r')                        # (3, nao, nao)
+        C = mf.mo_coeff
+        d_mo = np.einsum('xpq,pi,qj->xij', d_ao, C, C)   # (3, nmo, nmo)
+
+        ansatz = LUCJAnsatz(n_qubits=2 * ham.n_orbitals, n_electrons=ham.n_electrons,
+                            n_layers=self._fd_n_layers)
+        qc = ansatz.build_circuit()
+        rng = np.random.default_rng(0)
+        params = rng.uniform(-0.8, 0.8, size=qc.num_parameters)
+        bound = qc.assign_parameters(
+            {qc.parameters[i]: float(params[i]) for i in range(qc.num_parameters)}
+        )
+        solver = SamplingSQDSolver(
+            ham, n_samples=self.n_samples, backend='statevector',
+            recover_configurations=True, ci_backend=self.ci_backend,
+            target_sz=self.target_sz, random_seed=0,
+        )
+        # H(E): electronic term +Σ_i E_i·r_i(MO) added to the one-body tensor.
+        solver._h1 = solver._h1 + sum(e_field[i] * d_mo[i] for i in range(3))
+        res = solver.solve_iterative(
+            ansatz_circuit=bound, seed_determinants=warm_state, **dict(self._fd_iter_kwargs),
+        ).to_dict()
+        # Nuclear-field interaction −(Σ_A Z_A R_A)·E (constant in the wavefunction; drops out
+        # of α = −d²E/dF² but included so the returned energy is the true H(E) expectation).
+        nuc_dip = np.einsum('a,ax->x', m.atom_charges(), m.atom_coords())  # R in Bohr
+        e_total = float(res['energy']) - float(np.dot(nuc_dip, e_field))
+        return e_total, res.get('determinants')
 
     def solve(self, ansatz_circuit: Optional[QuantumCircuit] = None) -> SolverResult:
         """Run sample-based SQD and return a unified :class:`SolverResult`.
